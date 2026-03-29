@@ -1,0 +1,272 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// ─── Store Settings ──────────────────────────────────────────
+
+model StoreSettings {
+  id               String   @id @default(cuid())
+  shop             String   @unique
+  returnWindowDays Int      @default(30)
+  isAutoApprove    Boolean  @default(false)
+  logoUrl          String?
+  brandColor       String?
+  merchantAddress  String?
+  returnPolicy     String?
+  enableKeepIt     Boolean  @default(false)
+  keepItMaxAmount  Decimal  @default(0)
+  enablePriceDiffExchange Boolean @default(false)
+  enableStoreCreditDiscountCode Boolean @default(false)
+  productReturnWindowsJson String? @default("{}")
+  collectionReturnWindowsJson String? @default("{}")
+  nonReturnableProductIds String?
+  nonReturnableCollectionIds String?
+  excludeDiscountedItems Boolean @default(false)
+  minimumOrderAmount Decimal @default(0)
+  maxReturnsPerCustomer Int @default(0)
+  autoApproveUnderAmount Decimal @default(0)
+  blockedCustomerEmails String?
+  reasonPriorityJson String? @default("{}")
+  enableAutoCustomerEmail Boolean @default(false)
+  emailProvider      String? @default("RESEND")
+  resendApiKey       String?
+  emailFrom          String?
+  emailReplyTo       String?
+  merchantNotificationEmail String?
+  enableMerchantNewReturnNotification Boolean @default(false)
+  emailTemplateHeaderText String?
+  emailTemplateFooterText String?
+  emailTemplateReceived String?
+  emailTemplateApproved String?
+  emailTemplateDeclined String?
+  emailTemplateCompleted String?
+  enableSmsNotifications Boolean @default(false)
+  smsWebhookUrl      String?
+  enableWhatsAppNotifications Boolean @default(false)
+  whatsappWebhookUrl String?
+  enableFlowWebhook  Boolean @default(false)
+  flowWebhookUrl     String?
+  enableKlaviyo      Boolean @default(false)
+  klaviyoApiKey      String?
+  enableSlackNotifications Boolean @default(false)
+  slackWebhookUrl    String?
+  enableGorgias      Boolean @default(false)
+  gorgiasWebhookUrl  String?
+  enableZendesk      Boolean @default(false)
+  zendeskWebhookUrl  String?
+  blockMultipleReturnsSameOrder Boolean @default(true)
+  requirePhotoForFraudReasons Boolean @default(true)
+  highReturnRateThreshold Decimal @default(0.5)
+  wardrobingWindowDays Int @default(30)
+  wardrobingMaxReturns Int @default(3)
+  ipRepeatWindowHours Int @default(24)
+  ipRepeatMaxReturns Int @default(2)
+  // Billing
+  plan             String   @default("FREE")
+  shopifySubscriptionId String?
+  monthlyReturnCount Int    @default(0)
+  billingCycleStart DateTime?
+  // Locale
+  locale           String   @default("en")
+  // Shipping (Shippo)
+  shippoApiKey     String?
+  shippingProvider  String   @default("SHIPPO")
+  easypostApiKey    String?
+  // Timestamps
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ReturnActionLog {
+  id              String    @id @default(cuid())
+  shop            String
+  returnRequestId String
+  action          String
+  actor           String?
+  note            String?
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+
+  @@index([shop, returnRequestId, createdAt])
+  @@index([shop, action, createdAt])
+}
+
+model FraudEvent {
+  id              String    @id @default(cuid())
+  shop            String
+  returnRequestId String?
+  orderId         String?
+  customerEmail   String?
+  clientIp        String?
+  rule            String
+  outcome         String
+  score           Decimal?
+  details         Json?
+  createdAt       DateTime  @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, rule, createdAt])
+  @@index([shop, customerEmail, createdAt])
+}
+
+// ─── Return Request ──────────────────────────────────────────
+
+model ReturnRequest {
+  id              String       @id @default(cuid())
+  shop            String
+  shopifyReturnId String?
+  orderId         String
+  orderName       String
+  customerEmail   String
+  status          ReturnStatus @default(REQUESTED)
+  reason          String?
+  internalNote    String?
+  customerMessage String?
+  customerMessageSentAt DateTime?
+  restockDecision RestockDecision @default(NO_RESTOCK)
+  stockSyncStatus StockSyncStatus @default(PENDING)
+  stockSyncedAt   DateTime?
+  stockSyncError  String?
+  isManual        Boolean      @default(false)
+  clientIp        String?
+  proofImages     String[]     @default([])
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  items           ReturnItem[]
+  resolution      Resolution?
+  shippingLabel   ShippingLabel?
+
+  @@index([shop])
+  @@index([orderId])
+  @@index([customerEmail])
+}
+
+// ─── Return Item ─────────────────────────────────────────────
+
+model ReturnItem {
+  id              String        @id @default(cuid())
+  returnRequestId String
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  productId       String
+  variantId       String
+  title           String
+  quantity        Int
+  price           Decimal
+
+  @@index([returnRequestId])
+}
+
+// ─── Resolution ──────────────────────────────────────────────
+
+model Resolution {
+  id              String         @id @default(cuid())
+  returnRequestId String         @unique
+  returnRequest   ReturnRequest  @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  type            ResolutionType
+  amount          Decimal?
+  priceDifference Decimal?
+  paymentLinkUrl  String?
+  discountCode    String?
+  metadata        Json?
+  currency        String         @default("USD")
+  createdAt       DateTime       @default(now())
+}
+
+// ─── Shipping Label ──────────────────────────────────────────
+
+model ShippingLabel {
+  id              String        @id @default(cuid())
+  returnRequestId String        @unique
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  trackingNumber  String?
+  labelUrl        String?
+  carrier         String?
+  status          LabelStatus   @default(CREATED)
+  createdAt       DateTime      @default(now())
+}
+
+// ─── Usage Record (komisyon takibi) ─────────────────────────
+
+model UsageRecord {
+  id              String         @id @default(cuid())
+  shop            String
+  returnRequestId String
+  type            ResolutionType
+  savedAmount     Decimal
+  commissionRate  Decimal        @default(0.02)
+  commissionAmount Decimal
+  currency        String         @default("USD")
+  charged         Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+
+  @@index([shop])
+  @@index([returnRequestId])
+}
+
+// ─── Enums ───────────────────────────────────────────────────
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  COMPLETED
+  CANCELLED
+}
+
+enum ResolutionType {
+  REFUND
+  EXCHANGE
+  EXCHANGE_DIFFERENT_PRODUCT
+  EXCHANGE_WITH_PRICE_DIFF
+  STORE_CREDIT
+  KEEP_IT
+}
+
+enum LabelStatus {
+  CREATED
+  IN_TRANSIT
+  DELIVERED
+}
+
+enum RestockDecision {
+  RESTOCK
+  NO_RESTOCK
+}
+
+enum StockSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+}

@@ -1,0 +1,21 @@
+-- AlterTable
+ALTER TABLE "StoreSettings"
+ADD COLUMN "enableAutoCustomerEmail" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "emailProvider" TEXT DEFAULT 'RESEND',
+ADD COLUMN "resendApiKey" TEXT,
+ADD COLUMN "emailFrom" TEXT,
+ADD COLUMN "emailReplyTo" TEXT,
+ADD COLUMN "merchantNotificationEmail" TEXT,
+ADD COLUMN "enableMerchantNewReturnNotification" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "emailTemplateHeaderText" TEXT,
+ADD COLUMN "emailTemplateFooterText" TEXT,
+ADD COLUMN "emailTemplateReceived" TEXT,
+ADD COLUMN "emailTemplateApproved" TEXT,
+ADD COLUMN "emailTemplateDeclined" TEXT,
+ADD COLUMN "emailTemplateCompleted" TEXT,
+ADD COLUMN "enableSmsNotifications" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "smsWebhookUrl" TEXT,
+ADD COLUMN "enableWhatsAppNotifications" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "whatsappWebhookUrl" TEXT,
+ADD COLUMN "enableFlowWebhook" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "flowWebhookUrl" TEXT;
