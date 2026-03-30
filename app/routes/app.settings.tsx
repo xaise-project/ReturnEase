@@ -330,7 +330,6 @@ export default function Settings() {
   const [easypostApiKey, setEasypostApiKey] = useState(settings?.easypostApiKey ?? "");
   const [locale, setLocale] = useState(settings?.locale ?? "en");
   const [returnPolicy, setReturnPolicy] = useState(settings?.returnPolicy ?? "");
-  const [brandColor, setBrandColor] = useState(settings?.brandColor ?? "#000000");
   const [enableKeepIt, setEnableKeepIt] = useState(settings?.enableKeepIt ?? false);
   const [keepItMaxAmount, setKeepItMaxAmount] = useState(
     settings?.keepItMaxAmount ? String(settings.keepItMaxAmount) : "0",
@@ -428,6 +427,22 @@ export default function Settings() {
     settings?.ipRepeatMaxReturns ? String(settings.ipRepeatMaxReturns) : "2",
   );
   const [saved, setSaved] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+
+  const POLICY_PRESETS = [
+    {
+      label: t["settings.policyPreset1Label"] || "Standard (30-day)",
+      text: t["settings.policyPreset1"] || "We accept returns within 30 days of delivery. Items must be unused, unwashed, and in their original packaging with tags attached. To initiate a return, please use our returns portal. Once we receive and inspect the item, your refund will be processed within 5–7 business days.",
+    },
+    {
+      label: t["settings.policyPreset2Label"] || "Flexible (Exchange-first)",
+      text: t["settings.policyPreset2"] || "We want you to love your purchase. If something isn't right, we offer exchanges or store credit within 45 days of delivery. Refunds are available within 14 days of delivery. Items must be in original condition. Start your return through our portal and we'll guide you through the process.",
+    },
+    {
+      label: t["settings.policyPreset3Label"] || "Strict (Final sale)",
+      text: t["settings.policyPreset3"] || "Returns are accepted within 14 days of delivery for defective or incorrect items only. All sale items are final sale and cannot be returned or exchanged. Items must be returned in their original condition and packaging. Please contact us before initiating a return.",
+    },
+  ];
 
   const handleSave = () => {
     setSaved(false);
@@ -440,7 +455,6 @@ export default function Settings() {
     formData.set("easypostApiKey", easypostApiKey);
     formData.set("locale", locale);
     formData.set("returnPolicy", returnPolicy);
-    formData.set("brandColor", brandColor);
     formData.set("enableKeepIt", String(enableKeepIt));
     formData.set("keepItMaxAmount", keepItMaxAmount);
     formData.set("enablePriceDiffExchange", String(enablePriceDiffExchange));
@@ -450,7 +464,7 @@ export default function Settings() {
       JSON.stringify(
         Object.fromEntries(
           Object.entries(productWindows)
-            .map(([id, days]) => [id, Number(days)])
+            .map(([id, days]) => [id, Number(days)] as [string, number])
             .filter(([, days]) => Number.isFinite(days) && days > 0),
         ),
       ),
@@ -460,7 +474,7 @@ export default function Settings() {
       JSON.stringify(
         Object.fromEntries(
           Object.entries(collectionWindows)
-            .map(([id, days]) => [id, Number(days)])
+            .map(([id, days]) => [id, Number(days)] as [string, number])
             .filter(([, days]) => Number.isFinite(days) && days > 0),
         ),
       ),
@@ -577,12 +591,31 @@ export default function Settings() {
                       max={365}
                       autoComplete="off"
                     />
-                    <Checkbox
-                      label={t["settings.autoApprove"]}
-                      checked={isAutoApprove}
-                      onChange={setIsAutoApprove}
-                      helpText={t["settings.autoApproveHelp"]}
-                    />
+                    <div>
+                      <Checkbox
+                        label={t["settings.autoApprove"]}
+                        checked={isAutoApprove}
+                        onChange={setIsAutoApprove}
+                        helpText={t["settings.autoApproveHelp"]}
+                      />
+                      {isAutoApprove && (
+                        <div style={{
+                          marginTop: 10, padding: "10px 14px",
+                          background: "#FFF7ED", border: "1px solid #FED7AA",
+                          borderRadius: 8, display: "flex", gap: 10, alignItems: "flex-start",
+                        }}>
+                          <span style={{ fontSize: 18 }}>⚠️</span>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: "#92400E" }}>
+                              {t["settings.autoApproveRiskTitle"] || "Risk Warning"}
+                            </div>
+                            <div style={{ fontSize: 12, color: "#B45309", marginTop: 2 }}>
+                              {t["settings.autoApproveRiskText"] || "Auto-approve will automatically accept all return requests without manual review. This may increase return fraud risk. We recommend enabling a maximum order amount limit below."}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <TextField
                       label={t["settings.autoApproveUnderAmount"]}
                       type="number"
@@ -591,21 +624,6 @@ export default function Settings() {
                       min={0}
                       step={0.01}
                       helpText={t["settings.autoApproveUnderAmountHelp"]}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label={t["settings.policyText"]}
-                      value={returnPolicy}
-                      onChange={setReturnPolicy}
-                      multiline={4}
-                      helpText={t["settings.policyTextHelp"]}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label={t["settings.brandColor"]}
-                      value={brandColor}
-                      onChange={setBrandColor}
-                      helpText={t["settings.brandColorHelp"]}
                       autoComplete="off"
                     />
                     <TextField
@@ -618,6 +636,43 @@ export default function Settings() {
                     />
                   </BlockStack>
                 </Card>
+
+                <Card>
+                  <BlockStack gap="300">
+                    <Text as="h2" variant="headingMd">{t["settings.policyText"] || "Return Policy"}</Text>
+                    <Divider />
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t["settings.policyPresetsHelp"] || "Choose a preset template to get started, then customize the text below."}
+                    </Text>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {POLICY_PRESETS.map((preset, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setReturnPolicy(preset.text)}
+                          style={{
+                            padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                            cursor: "pointer", border: "1.5px solid #6366F1",
+                            background: returnPolicy === preset.text ? "#6366F1" : "#fff",
+                            color: returnPolicy === preset.text ? "#fff" : "#6366F1",
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <TextField
+                      label={t["settings.policyText"] || "Policy Text"}
+                      value={returnPolicy}
+                      onChange={setReturnPolicy}
+                      multiline={5}
+                      helpText={t["settings.policyTextHelp"]}
+                      autoComplete="off"
+                    />
+                  </BlockStack>
+                </Card>
+
                 <Card>
                   <BlockStack gap="300">
                     <InlineStack align="space-between">
@@ -630,7 +685,7 @@ export default function Settings() {
                     </InlineStack>
                     <Divider />
                     <Select
-                      label={t["settings.shippingProvider"] || "Kargo Sağlayıcı"}
+                      label={t["settings.shippingProvider"] || "Shipping Provider"}
                       options={[
                         { label: "Shippo", value: "SHIPPO" },
                         { label: "EasyPost", value: "EASYPOST" },
@@ -638,21 +693,57 @@ export default function Settings() {
                       value={shippingProvider}
                       onChange={setShippingProvider}
                     />
-                    <TextField
-                      label={t["settings.shippoApiToken"]}
-                      value={shippoApiKey}
-                      onChange={setShippoApiKey}
-                      type="password"
-                      helpText={t["settings.shippoHelp"]}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label={t["settings.easypostApiToken"] || "EasyPost API Token"}
-                      value={easypostApiKey}
-                      onChange={setEasypostApiKey}
-                      type="password"
-                      autoComplete="off"
-                    />
+                    {shippingProvider === "SHIPPO" && (
+                      <div>
+                        <div style={{
+                          background: "#F0F9FF", border: "1px solid #BAE6FD",
+                          borderRadius: 8, padding: "12px 14px", marginBottom: 12,
+                        }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: "#0369A1", marginBottom: 6 }}>
+                            {t["settings.shippoInstructionsTitle"] || "How to get your Shippo API key"}
+                          </div>
+                          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#0284C7", lineHeight: 1.7 }}>
+                            <li>{t["settings.shippoStep1"] || "Go to goshippo.com and create a free account."}</li>
+                            <li>{t["settings.shippoStep2"] || "In your dashboard, navigate to Settings → API."}</li>
+                            <li>{t["settings.shippoStep3"] || "Click \"Generate Token\" and copy your API token."}</li>
+                            <li>{t["settings.shippoStep4"] || "Paste it below. Use a test token for development."}</li>
+                          </ol>
+                        </div>
+                        <TextField
+                          label={t["settings.shippoApiToken"]}
+                          value={shippoApiKey}
+                          onChange={setShippoApiKey}
+                          type="password"
+                          helpText={t["settings.shippoHelp"]}
+                          autoComplete="off"
+                        />
+                      </div>
+                    )}
+                    {shippingProvider === "EASYPOST" && (
+                      <div>
+                        <div style={{
+                          background: "#F0F9FF", border: "1px solid #BAE6FD",
+                          borderRadius: 8, padding: "12px 14px", marginBottom: 12,
+                        }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: "#0369A1", marginBottom: 6 }}>
+                            {t["settings.easypostInstructionsTitle"] || "How to get your EasyPost API key"}
+                          </div>
+                          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#0284C7", lineHeight: 1.7 }}>
+                            <li>{t["settings.easypostStep1"] || "Go to easypost.com and create a free account."}</li>
+                            <li>{t["settings.easypostStep2"] || "In your dashboard, go to API Keys section."}</li>
+                            <li>{t["settings.easypostStep3"] || "Copy your Test or Production API key."}</li>
+                            <li>{t["settings.easypostStep4"] || "Paste it below. Use the test key for development."}</li>
+                          </ol>
+                        </div>
+                        <TextField
+                          label={t["settings.easypostApiToken"] || "EasyPost API Token"}
+                          value={easypostApiKey}
+                          onChange={setEasypostApiKey}
+                          type="password"
+                          autoComplete="off"
+                        />
+                      </div>
+                    )}
                   </BlockStack>
                 </Card>
               </BlockStack>
@@ -699,26 +790,28 @@ export default function Settings() {
                       onChange={setExcludeDiscountedItems}
                       helpText={t["settings.excludeDiscountedItemsHelp"]}
                     />
-                    <TextField
-                      label={t["settings.minimumOrderAmount"]}
-                      type="number"
-                      value={minimumOrderAmount}
-                      onChange={setMinimumOrderAmount}
-                      min={0}
-                      step={0.01}
-                      helpText={t["settings.minimumOrderAmountHelp"]}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label={t["settings.maxReturnsPerCustomer"]}
-                      type="number"
-                      value={maxReturnsPerCustomer}
-                      onChange={setMaxReturnsPerCustomer}
-                      min={0}
-                      step={1}
-                      helpText={t["settings.maxReturnsPerCustomerHelp"]}
-                      autoComplete="off"
-                    />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      <TextField
+                        label={t["settings.minimumOrderAmount"]}
+                        type="number"
+                        value={minimumOrderAmount}
+                        onChange={setMinimumOrderAmount}
+                        min={0}
+                        step={0.01}
+                        helpText={t["settings.minimumOrderAmountHelp"]}
+                        autoComplete="off"
+                      />
+                      <TextField
+                        label={t["settings.maxReturnsPerCustomer"]}
+                        type="number"
+                        value={maxReturnsPerCustomer}
+                        onChange={setMaxReturnsPerCustomer}
+                        min={0}
+                        step={1}
+                        helpText={t["settings.maxReturnsPerCustomerHelp"]}
+                        autoComplete="off"
+                      />
+                    </div>
                   </BlockStack>
                 </Card>
                 <Card>
@@ -828,33 +921,21 @@ export default function Settings() {
                     <Text as="h2" variant="headingMd">{t["settings.productReturnWindows"]}</Text>
                     <Divider />
                     {products.map((product) => (
-                      <InlineStack key={product.id} align="space-between" blockAlign="center">
-                        <Checkbox
-                          label={product.title}
-                          checked={Boolean(productWindows[product.id])}
-                          onChange={(checked) =>
-                            setProductWindows((prev) => {
-                              if (!checked) {
-                                const next = { ...prev };
-                                delete next[product.id];
-                                return next;
-                              }
-                              return { ...prev, [product.id]: "30" };
-                            })
-                          }
-                        />
-                        <TextField
-                          label={t["settings.windowDaysShort"]}
-                          labelHidden
-                          type="number"
-                          min={1}
-                          max={365}
-                          value={productWindows[product.id] || ""}
-                          disabled={!productWindows[product.id]}
-                          onChange={(value) => setProductWindows((prev) => ({ ...prev, [product.id]: value }))}
-                          autoComplete="off"
-                        />
-                      </InlineStack>
+                      <Checkbox
+                        key={product.id}
+                        label={product.title}
+                        checked={Boolean(productWindows[product.id])}
+                        onChange={(checked) =>
+                          setProductWindows((prev) => {
+                            if (!checked) {
+                              const next = { ...prev };
+                              delete next[product.id];
+                              return next;
+                            }
+                            return { ...prev, [product.id]: "30" };
+                          })
+                        }
+                      />
                     ))}
                   </BlockStack>
                 </Card>
@@ -863,33 +944,21 @@ export default function Settings() {
                     <Text as="h2" variant="headingMd">{t["settings.collectionReturnWindows"]}</Text>
                     <Divider />
                     {collections.map((collection) => (
-                      <InlineStack key={collection.id} align="space-between" blockAlign="center">
-                        <Checkbox
-                          label={collection.title}
-                          checked={Boolean(collectionWindows[collection.id])}
-                          onChange={(checked) =>
-                            setCollectionWindows((prev) => {
-                              if (!checked) {
-                                const next = { ...prev };
-                                delete next[collection.id];
-                                return next;
-                              }
-                              return { ...prev, [collection.id]: "30" };
-                            })
-                          }
-                        />
-                        <TextField
-                          label={t["settings.windowDaysShort"]}
-                          labelHidden
-                          type="number"
-                          min={1}
-                          max={365}
-                          value={collectionWindows[collection.id] || ""}
-                          disabled={!collectionWindows[collection.id]}
-                          onChange={(value) => setCollectionWindows((prev) => ({ ...prev, [collection.id]: value }))}
-                          autoComplete="off"
-                        />
-                      </InlineStack>
+                      <Checkbox
+                        key={collection.id}
+                        label={collection.title}
+                        checked={Boolean(collectionWindows[collection.id])}
+                        onChange={(checked) =>
+                          setCollectionWindows((prev) => {
+                            if (!checked) {
+                              const next = { ...prev };
+                              delete next[collection.id];
+                              return next;
+                            }
+                            return { ...prev, [collection.id]: "30" };
+                          })
+                        }
+                      />
                     ))}
                   </BlockStack>
                 </Card>
@@ -931,25 +1000,105 @@ export default function Settings() {
             )}
 
             {selectedTab === 3 && (
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">{t["settings.blockedCustomerEmails"]}</Text>
-                  <Divider />
-                  <Text as="p" variant="bodySm" tone="subdued">{t["settings.blockedCustomerEmailsHelp"]}</Text>
-                  {customers.map((customer) => (
-                    <Checkbox
-                      key={customer.email}
-                      label={customer.label}
-                      checked={blockedCustomerEmails.includes(customer.email)}
-                      onChange={(checked) =>
-                        setBlockedCustomerEmails((prev) =>
-                          checked ? [...new Set([...prev, customer.email])] : prev.filter((email) => email !== customer.email),
-                        )
-                      }
-                    />
-                  ))}
-                </BlockStack>
-              </Card>
+              <BlockStack gap="400">
+                <Card>
+                  <BlockStack gap="300">
+                    <Text as="h2" variant="headingMd">{t["settings.blockedCustomerEmails"] || "Block Customers"}</Text>
+                    <Divider />
+                    <Text as="p" variant="bodySm" tone="subdued">{t["settings.blockedCustomerEmailsHelp"] || "Search for customers and add them to the blocked list."}</Text>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type="text"
+                        value={customerSearch}
+                        onChange={(e) => setCustomerSearch(e.target.value)}
+                        placeholder={t["settings.customerSearchPlaceholder"] || "Search customers by name or email..."}
+                        style={{
+                          width: "100%", boxSizing: "border-box",
+                          padding: "8px 12px", borderRadius: 8, fontSize: 14,
+                          border: "1.5px solid #D1D5DB", outline: "none",
+                        }}
+                      />
+                      {customerSearch.length > 0 && (
+                        <div style={{
+                          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+                          background: "#fff", border: "1px solid #E5E7EB",
+                          borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                          maxHeight: 220, overflowY: "auto", marginTop: 4,
+                        }}>
+                          {customers
+                            .filter((c) =>
+                              !blockedCustomerEmails.includes(c.email) &&
+                              c.label.toLowerCase().includes(customerSearch.toLowerCase())
+                            )
+                            .slice(0, 10)
+                            .map((customer) => (
+                              <div
+                                key={customer.email}
+                                onClick={() => {
+                                  setBlockedCustomerEmails((prev) => [...new Set([...prev, customer.email])]);
+                                  setCustomerSearch("");
+                                }}
+                                style={{
+                                  padding: "8px 14px", cursor: "pointer", fontSize: 13,
+                                  borderBottom: "1px solid #F3F4F6",
+                                  transition: "background 0.1s",
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = "#F9FAFB")}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                              >
+                                {customer.label}
+                              </div>
+                            ))}
+                          {customers.filter((c) =>
+                            !blockedCustomerEmails.includes(c.email) &&
+                            c.label.toLowerCase().includes(customerSearch.toLowerCase())
+                          ).length === 0 && (
+                            <div style={{ padding: "10px 14px", fontSize: 13, color: "#9CA3AF" }}>
+                              {t["settings.noCustomersFound"] || "No customers found"}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </BlockStack>
+                </Card>
+
+                {blockedCustomerEmails.length > 0 && (
+                  <Card>
+                    <BlockStack gap="300">
+                      <Text as="h2" variant="headingMd">{t["settings.blockedCustomersList"] || "Blocked Customers"}</Text>
+                      <Divider />
+                      {blockedCustomerEmails.map((email) => {
+                        const customer = customers.find((c) => c.email === email);
+                        return (
+                          <div key={email} style={{
+                            display: "flex", justifyContent: "space-between", alignItems: "center",
+                            padding: "8px 0", borderBottom: "1px solid #F3F4F6",
+                          }}>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 500 }}>
+                                {customer ? customer.label : email}
+                              </div>
+                              {customer && <div style={{ fontSize: 11, color: "#9CA3AF" }}>{email}</div>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setBlockedCustomerEmails((prev) => prev.filter((e) => e !== email))}
+                              style={{
+                                background: "#FEE2E2", color: "#EF4444", border: "none",
+                                borderRadius: 6, padding: "4px 10px", fontSize: 12,
+                                fontWeight: 600, cursor: "pointer",
+                              }}
+                            >
+                              {t["settings.unblock"] || "Remove"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </BlockStack>
+                  </Card>
+                )}
+              </BlockStack>
             )}
 
             {selectedTab === 4 && (

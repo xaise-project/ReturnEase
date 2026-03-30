@@ -68,84 +68,92 @@ export default function Index() {
       <BlockStack gap="500">
         <Layout>
           <Layout.Section>
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingLg">{t["dashboard.welcome"]}</Text>
-                <Text as="p" variant="bodyMd">{t["dashboard.description"]}</Text>
-                <InlineStack gap="200">
-                  <Button onClick={() => navigate("/app/returns")}>{t["dashboard.viewReturns"]}</Button>
-                  <Button onClick={() => navigate("/app/analytics")}>{t["dashboard.analytics"]}</Button>
-                  <Button onClick={() => navigate("/app/settings")}>{t["dashboard.settings"]}</Button>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-
-          <Layout.Section>
             <InlineGrid columns={4} gap="400">
               <Card>
                 <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" tone="subdued">{t["dashboard.totalReturns"]}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.totalReturns"]}</Text>
                   <Text as="p" variant="headingXl">{totalReturns}</Text>
                 </BlockStack>
               </Card>
               <Card>
                 <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" tone="subdued">{t["dashboard.pending"]}</Text>
-                  <InlineGrid columns="1fr auto" alignItems="center">
-                    <Text as="p" variant="headingXl">{pendingReturns}</Text>
-                    {pendingReturns > 0 && <Badge tone="attention">{t["dashboard.new"]}</Badge>}
-                  </InlineGrid>
+                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.pending"]}</Text>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/app/returns?status=REQUESTED")}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      margin: 0,
+                      width: "100%",
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <InlineGrid columns="1fr auto" alignItems="center">
+                      <Text as="p" variant="headingXl">{pendingReturns}</Text>
+                      {pendingReturns > 0 && <Badge tone="attention">{t["dashboard.new"]}</Badge>}
+                    </InlineGrid>
+                  </button>
                 </BlockStack>
               </Card>
               <Card>
                 <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" tone="subdued">{t["dashboard.approved"]}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.approved"]}</Text>
                   <Text as="p" variant="headingXl">{approvedReturns}</Text>
                 </BlockStack>
               </Card>
               <Card>
                 <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" tone="subdued">{t["dashboard.completed"]}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.completed"]}</Text>
                   <Text as="p" variant="headingXl">{completedReturns}</Text>
                 </BlockStack>
               </Card>
             </InlineGrid>
           </Layout.Section>
 
-          {recentReturns.length > 0 && (
-            <Layout.Section>
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between">
-                    <Text as="h2" variant="headingMd">{t["dashboard.recentReturns"]}</Text>
-                    <Button variant="plain" onClick={() => navigate("/app/returns")}>{t["dashboard.viewAll"]}</Button>
-                  </InlineStack>
-                  <Divider />
-                  {recentReturns.map((r: any) => (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between">
+                  <Text as="h2" variant="headingMd">{t["dashboard.recentReturns"]}</Text>
+                  <Button variant="plain" onClick={() => navigate("/app/returns")}>{t["dashboard.viewAll"]}</Button>
+                </InlineStack>
+                <Divider />
+                {recentReturns.length > 0 ? (
+                  recentReturns.map((r: any) => (
                     <div
                       key={r.id}
-                      style={{ cursor: "pointer", padding: "8px 0", borderBottom: "1px solid #f3f4f6" }}
+                      style={{ cursor: "pointer", padding: "7px 0", borderBottom: "1px solid #f3f4f6" }}
                       onClick={() => navigate(`/app/returns/${r.id}`)}
                     >
-                      <InlineStack align="space-between">
+                      <InlineStack align="space-between" blockAlign="start">
                         <BlockStack gap="100">
-                          <Text as="span" fontWeight="semibold">{r.orderName}</Text>
+                          <Text as="span" variant="bodySm">{r.orderName}</Text>
                           <Text as="span" variant="bodySm" tone="subdued">{r.customerEmail}</Text>
                         </BlockStack>
                         <BlockStack gap="100" inlineAlign="end">
                           {statusBadge(r.status)}
                           <Text as="span" variant="bodySm" tone="subdued">
-                            {new Date(r.createdAt).toLocaleDateString(locale === "tr" ? "tr-TR" : "en-US")}
+                            {new Date(r.createdAt).toLocaleString(locale === "tr" ? "tr-TR" : "en-US", {
+                              year: "numeric",
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           </Text>
                         </BlockStack>
                       </InlineStack>
                     </div>
-                  ))}
-                </BlockStack>
-              </Card>
-            </Layout.Section>
-          )}
+                  ))
+                ) : (
+                  <Text as="p" tone="subdued">{t["analytics.noData"] || "Veri yok"}</Text>
+                )}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
         </Layout>
       </BlockStack>
     </Page>

@@ -170,6 +170,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
   };
+  const fetchRemoteReturnStatus = async () => {
+    if (!returnRequest.shopifyReturnId) return "";
+    try {
+      const response = await admin.graphql(
+        `#graphql
+          query getReturnStatus($id: ID!) {
+            return(id: $id) {
+              id
+              status
+            }
+          }
+        `,
+        { variables: { id: returnRequest.shopifyReturnId } },
+      );
+      const data = await response.json();
+      return String(data.data?.return?.status || "");
+    } catch {
+      return "";
+    }
+  };
 
   const finalizeReturn = async () => {
     let syncData: any = {
@@ -210,6 +230,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (intent === "approve" && returnRequest.shopifyReturnId) {
     try {
+      const remoteStatus = await fetchRemoteReturnStatus();
+      if (remoteStatus === "APPROVED") {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "APPROVED" } });
+        await logAction("DETAIL_APPROVE_RECONCILED", { remoteStatus });
+        return json({ success: "approved" });
+      }
+      if (remoteStatus === "CLOSED") {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "COMPLETED" } });
+        await logAction("DETAIL_APPROVE_SKIPPED", { remoteStatus });
+        return json({ success: "completed" });
+      }
+      if (["DECLINED", "CANCELLED"].includes(remoteStatus)) {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "DECLINED" } });
+        await logAction("DETAIL_APPROVE_SKIPPED", { remoteStatus });
+        return json({ success: "declined" });
+      }
+
       const response = await admin.graphql(
         `#graphql
           mutation returnApproveRequest($input: ReturnApproveRequestInput!) {
@@ -223,8 +260,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
       const data = await response.json();
       const errors = data.data?.returnApproveRequest?.userErrors || [];
-      if (errors.length > 0) {
-        return json({ error: errors.map((e: any) => e.message).join(", ") });
+      const blockingErrors = errors.filter((e: any) => {
+        const msg = String(e.message || "").toLowerCase();
+        if (msg.includes("already")) return false;
+        if (msg.includes("not approvable")) return false;
+        if (msg.includes("only returns with status requested can be approved")) return false;
+        return true;
+      });
+      if (blockingErrors.length > 0) {
+        return json({ error: blockingErrors.map((e: any) => e.message).join(", ") });
+      }
+      const reconciledStatus = await fetchRemoteReturnStatus();
+      if (reconciledStatus === "CLOSED") {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "COMPLETED" } });
+        await logAction("DETAIL_APPROVE", { remoteStatus: reconciledStatus });
+        return json({ success: "completed" });
+      }
+      if (["DECLINED", "CANCELLED"].includes(reconciledStatus)) {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "DECLINED" } });
+        await logAction("DETAIL_APPROVE_SKIPPED", { remoteStatus: reconciledStatus });
+        return json({ success: "declined" });
       }
       await prisma.returnRequest.update({
         where: { id },
@@ -251,6 +306,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (intent === "decline" && returnRequest.shopifyReturnId) {
     try {
+      const remoteStatus = await fetchRemoteReturnStatus();
+      if (["DECLINED", "CANCELLED"].includes(remoteStatus)) {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "DECLINED" } });
+        await logAction("DETAIL_DECLINE_RECONCILED", { remoteStatus });
+        return json({ success: "declined" });
+      }
+      if (remoteStatus === "CLOSED") {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "COMPLETED" } });
+        await logAction("DETAIL_DECLINE_SKIPPED", { remoteStatus });
+        return json({ success: "completed" });
+      }
+      if (remoteStatus === "APPROVED") {
+        await prisma.returnRequest.update({ where: { id }, data: { status: "APPROVED" } });
+        await logAction("DETAIL_DECLINE_SKIPPED", { remoteStatus });
+        return json({ success: "approved" });
+      }
+
       const response = await admin.graphql(
         `#graphql
           mutation returnDeclineRequest($input: ReturnDeclineRequestInput!) {
@@ -264,27 +336,44 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       );
       const data = await response.json();
       const errors = data.data?.returnDeclineRequest?.userErrors || [];
-      if (errors.length > 0) {
-        return json({ error: errors.map((e: any) => e.message).join(", ") });
+      const blockingErrors = errors.filter((e: any) => {
+        const msg = String(e.message || "").toLowerCase();
+        if (msg.includes("already")) return false;
+        if (msg.includes("not declinable")) return false;
+        if (msg.includes("only non-refunded returns with status requested can be declined")) return false;
+        return true;
+      });
+      if (blockingErrors.length > 0) {
+        return json({ error: blockingErrors.map((e: any) => e.message).join(", ") });
       }
+      const reconciledStatus = await fetchRemoteReturnStatus();
+      const nextStatus = reconciledStatus === "CLOSED"
+        ? "COMPLETED"
+        : reconciledStatus === "APPROVED"
+          ? "APPROVED"
+          : "DECLINED";
       await prisma.returnRequest.update({
         where: { id },
-        data: { status: "DECLINED" },
+        data: { status: nextStatus },
       });
-      await logAction("DETAIL_DECLINE");
-      await dispatchReturnNotifications({
-        shop: session.shop,
-        event: "RETURN_DECLINED",
-        returnRequest: {
-          id: String(id),
-          orderName: returnRequest.orderName,
-          customerEmail: returnRequest.customerEmail,
-          reason: returnRequest.reason,
-          status: "DECLINED",
-          resolutionType: returnRequest.resolution?.type || null,
-        },
-      });
-      return json({ success: "declined" });
+      await logAction("DETAIL_DECLINE", { remoteStatus: reconciledStatus || "UNKNOWN" });
+      if (nextStatus === "DECLINED") {
+        await dispatchReturnNotifications({
+          shop: session.shop,
+          event: "RETURN_DECLINED",
+          returnRequest: {
+            id: String(id),
+            orderName: returnRequest.orderName,
+            customerEmail: returnRequest.customerEmail,
+            reason: returnRequest.reason,
+            status: "DECLINED",
+            resolutionType: returnRequest.resolution?.type || null,
+          },
+        });
+        return json({ success: "declined" });
+      }
+      if (nextStatus === "COMPLETED") return json({ success: "completed" });
+      return json({ success: "approved" });
     } catch (e: any) {
       return json({ error: e.message });
     }
@@ -497,15 +586,15 @@ export default function ReturnDetail() {
               <Button
                 variant="primary"
                 loading={isSubmitting}
-                onClick={() => submit({ intent: "complete_from_pending" }, { method: "post" })}
+                onClick={() => submit({ intent: "approve" }, { method: "post" })}
               >
-                {t["detail.approveRefund"] || "Kabul Et ve Para İadesi Yap"}
+                {t["detail.approveOnly"] || "Talebi Onayla"}
               </Button>
               <Button
                 variant="primary"
                 tone="critical"
                 loading={isSubmitting}
-                onClick={() => submit({ intent: "cancel_from_pending" }, { method: "post" })}
+                onClick={() => submit({ intent: "decline" }, { method: "post" })}
               >
                 {t["detail.rejectRequest"] || "Reddet"}
               </Button>
@@ -515,30 +604,35 @@ export default function ReturnDetail() {
 
         {r.status === "APPROVED" && (
           <Banner title={t["detail.approvedBanner"]} tone="info">
-            <InlineStack gap="200">
-              <Select
-                label={t["detail.restockDecision"] || "Restock Decision"}
-                options={[
-                  { label: t["detail.noRestock"] || "Do not restock", value: "NO_RESTOCK" },
-                  { label: t["detail.restock"] || "Restock returned items", value: "RESTOCK" },
-                ]}
-                value={restockDecision}
-                onChange={setRestockDecision}
-              />
-              <Button
-                onClick={() => submit({ intent: "set_restock_decision", restockDecision }, { method: "post" })}
-                loading={isSubmitting}
-              >
-                {t["detail.saveRestockDecision"] || "Save decision"}
-              </Button>
-              <Button
-                variant="primary"
-                loading={isSubmitting}
-                onClick={() => submit({ intent: "complete" }, { method: "post" })}
-              >
-                {t["detail.markComplete"]}
-              </Button>
-            </InlineStack>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t["detail.approvedInfo"] || "Müşteri onaylandı bilgilendirmesi gönderilir. Para iadesi tamamlandığında süreci Tamamlandı olarak işaretleyin."}
+              </Text>
+              <InlineStack gap="200">
+                <Select
+                  label={t["detail.restockDecision"] || "Restock Decision"}
+                  options={[
+                    { label: t["detail.noRestock"] || "Do not restock", value: "NO_RESTOCK" },
+                    { label: t["detail.restock"] || "Restock returned items", value: "RESTOCK" },
+                  ]}
+                  value={restockDecision}
+                  onChange={setRestockDecision}
+                />
+                <Button
+                  onClick={() => submit({ intent: "set_restock_decision", restockDecision }, { method: "post" })}
+                  loading={isSubmitting}
+                >
+                  {t["detail.saveRestockDecision"] || "Save decision"}
+                </Button>
+                <Button
+                  variant="primary"
+                  loading={isSubmitting}
+                  onClick={() => submit({ intent: "complete" }, { method: "post" })}
+                >
+                  {t["detail.markComplete"]}
+                </Button>
+              </InlineStack>
+            </BlockStack>
           </Banner>
         )}
 

@@ -289,14 +289,16 @@ async function handleOrderSearch(
   settings: any
 ) {
   const L = getTranslations(lang);
-  const orderName = formData.get("orderName") as string;
-  const email = formData.get("email") as string;
+  const orderName = (formData.get("orderName") as string)?.trim();
+  const email = (formData.get("email") as string)?.trim();
 
   if (!orderName || !email) {
     return liquid(portalHTML("error", { message: t(L, "portal.error.required"), lang }), { layout: false });
   }
 
-  const cleanOrderName = orderName.startsWith("#") ? orderName : `#${orderName}`;
+  const normalizedEmail = String(email || "").toLowerCase();
+  const normalizedOrderName = String(orderName || "").replace(/\s+/g, "");
+  const cleanOrderName = normalizedOrderName.startsWith("#") ? normalizedOrderName : `#${normalizedOrderName}`;
 
   try {
 
@@ -305,7 +307,7 @@ async function handleOrderSearch(
   const orderResponse = await admin.graphql(
     `#graphql
       query getOrder($query: String!) {
-        orders(first: 1, query: $query) {
+        orders(first: 5, query: $query) {
           edges {
             node {
               id
@@ -346,11 +348,14 @@ async function handleOrderSearch(
         }
       }
     `,
-    { variables: { query: `name:${cleanOrderName} AND email:${email}` } },
+    { variables: { query: `name:${cleanOrderName}` } },
   );
 
   const orderData = await orderResponse.json();
-  const order = orderData.data?.orders?.edges?.[0]?.node;
+  const orderCandidates = (orderData.data?.orders?.edges || []).map((e: any) => e.node);
+  const order = orderCandidates.find(
+    (candidate: any) => String(candidate?.email || "").trim().toLowerCase() === normalizedEmail,
+  );
 
   if (!order) {
     return liquid(portalHTML("not_found", { orderName: cleanOrderName, email, lang, settings }), { layout: false });

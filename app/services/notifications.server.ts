@@ -5,7 +5,8 @@ type NotificationEvent =
   | "RETURN_APPROVED"
   | "RETURN_DECLINED"
   | "RETURN_COMPLETED"
-  | "RETURN_CANCELLED";
+  | "RETURN_CANCELLED"
+  | "CUSTOM_EMAIL";
 
 type ReturnPayload = {
   id: string;
@@ -15,6 +16,8 @@ type ReturnPayload = {
   status: string;
   resolutionType?: string | null;
   amount?: number;
+  customSubject?: string;
+  customMessage?: string;
 };
 
 function applyTemplate(template: string, vars: Record<string, string>) {
@@ -30,6 +33,7 @@ function defaultBodyByEvent(event: NotificationEvent) {
   if (event === "RETURN_APPROVED") return "İade talebiniz onaylandı. Sipariş: {{orderName}}";
   if (event === "RETURN_DECLINED") return "İade talebiniz reddedildi. Sipariş: {{orderName}}";
   if (event === "RETURN_COMPLETED") return "İade süreciniz tamamlandı. Sipariş: {{orderName}}";
+  if (event === "CUSTOM_EMAIL") return "{{customMessage}}";
   return "İade talebiniz güncellendi. Sipariş: {{orderName}}";
 }
 
@@ -38,6 +42,7 @@ function subjectByEvent(event: NotificationEvent) {
   if (event === "RETURN_APPROVED") return "Return approved";
   if (event === "RETURN_DECLINED") return "Return declined";
   if (event === "RETURN_COMPLETED") return "Return completed";
+  if (event === "CUSTOM_EMAIL") return "{{customSubject}}";
   return "Return update";
 }
 
@@ -146,17 +151,24 @@ export async function dispatchReturnNotifications(params: {
 
   const header = settings.emailTemplateHeaderText || "ReturnEase";
   const footer = settings.emailTemplateFooterText || "ReturnEase ekibi";
-  const bodyTemplate =
-    (params.event === "RETURN_RECEIVED" && settings.emailTemplateReceived) ||
-    (params.event === "RETURN_APPROVED" && settings.emailTemplateApproved) ||
-    (params.event === "RETURN_DECLINED" && settings.emailTemplateDeclined) ||
-    (params.event === "RETURN_COMPLETED" && settings.emailTemplateCompleted) ||
-    defaultBodyByEvent(params.event);
+  
+  let bodyTemplate: string;
+  if (params.event === "CUSTOM_EMAIL" && params.returnRequest.customMessage) {
+    bodyTemplate = params.returnRequest.customMessage;
+  } else {
+    bodyTemplate =
+      (params.event === "RETURN_RECEIVED" && settings.emailTemplateReceived) ||
+      (params.event === "RETURN_APPROVED" && settings.emailTemplateApproved) ||
+      (params.event === "RETURN_DECLINED" && settings.emailTemplateDeclined) ||
+      (params.event === "RETURN_COMPLETED" && settings.emailTemplateCompleted) ||
+      defaultBodyByEvent(params.event);
+  }
+  
   const body = applyTemplate(bodyTemplate, vars);
   const html = `<div style="font-family:Arial,sans-serif"><h2 style="color:${settings.brandColor || "#000000"}">${header}</h2><p>${body}</p><p style="margin-top:24px;color:#6b7280">${footer}</p></div>`;
 
   if (
-    settings.enableAutoCustomerEmail &&
+    (settings.enableAutoCustomerEmail || params.event === "CUSTOM_EMAIL") &&
     settings.emailProvider === "RESEND" &&
     settings.resendApiKey &&
     settings.emailFrom &&
@@ -168,7 +180,9 @@ export async function dispatchReturnNotifications(params: {
         from: settings.emailFrom,
         replyTo: settings.emailReplyTo,
         to: params.returnRequest.customerEmail,
-        subject: subjectByEvent(params.event),
+        subject: params.event === "CUSTOM_EMAIL" && params.returnRequest.customSubject 
+          ? params.returnRequest.customSubject 
+          : subjectByEvent(params.event),
         html,
       });
     } catch (e: any) {

@@ -21,6 +21,7 @@ import {
   Select,
   useIndexResourceState,
   Autocomplete,
+  Modal,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -39,6 +40,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const resolutionType = url.searchParams.get("type") || "";
   const search = url.searchParams.get("search") || "";
   const page = parseInt(url.searchParams.get("page") || "1");
+  const sortBy = url.searchParams.get("sortBy") || "createdAt";
+  const sortOrder = url.searchParams.get("sortOrder") || "desc";
 
   const where: any = { shop: session.shop };
   if (status) where.status = status;
@@ -50,11 +53,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ];
   }
 
+  // Build orderBy clause based on sort parameters
+  const orderBy: any = {};
+  switch (sortBy) {
+    case "orderName":
+      orderBy.orderName = sortOrder;
+      break;
+    case "customerEmail":
+      orderBy.customerEmail = sortOrder;
+      break;
+    case "status":
+      orderBy.status = sortOrder;
+      break;
+    case "reason":
+      orderBy.reason = sortOrder;
+      break;
+    case "resolution":
+      orderBy.resolution = { type: sortOrder };
+      break;
+    case "itemsCount":
+      // For items count, we'll sort by the number of items
+      orderBy.items = { _count: sortOrder };
+      break;
+    case "createdAt":
+    default:
+      orderBy.createdAt = sortOrder;
+      break;
+  }
+
   const [returns, total] = await Promise.all([
     prisma.returnRequest.findMany({
       where,
       include: { items: true, resolution: true },
-      orderBy: { createdAt: "desc" },
+      orderBy,
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
@@ -437,6 +468,250 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { ok: true };
   }
 
+  async function declinePending(returnId: string) {
+    const record = await prisma.returnRequest.findFirst({
+      where: { id: returnId, shop: session.shop },
+      include: { resolution: true },
+    });
+    if (!record) return { ok: false, error: "Return not found" };
+    if (record.status !== "REQUESTED") return { ok: false, error: "Return is not pending" };
+
+    if (!record.shopifyReturnId) {
+      await prisma.returnRequest.update({
+        where: { id: returnId },
+        data: { status: "DECLINED" },
+      });
+      await logReturnAction(returnId, "DECLINE_PENDING", { source: "local_only" });
+      await dispatchReturnNotifications({
+        shop: session.shop,
+        event: "RETURN_DECLINED",
+        returnRequest: {
+          id: returnId,
+          orderName: record.orderName,
+          customerEmail: record.customerEmail,
+          reason: record.reason,
+          status: "DECLINED",
+          resolutionType: record.resolution?.type || null,
+        },
+      });
+      return { ok: true };
+    }
+
+    const remoteStatus = await fetchRemoteReturnStatus(record.shopifyReturnId);
+    if (["DECLINED", "CANCELLED"].includes(remoteStatus)) {
+      await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "DECLINED" } });
+      await logReturnAction(returnId, "DECLINE_PENDING", { source: "remote_reconciled", remoteStatus });
+      return { ok: true };
+    }
+    if (remoteStatus === "CLOSED") {
+      await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "COMPLETED" } });
+      await logReturnAction(returnId, "DECLINE_PENDING_SKIPPED", { source: "remote_reconciled", remoteStatus });
+      return { ok: true };
+    }
+    if (remoteStatus === "APPROVED") {
+      await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "APPROVED" } });
+      await logReturnAction(returnId, "DECLINE_PENDING_SKIPPED", { source: "remote_reconciled", remoteStatus });
+      return { ok: true };
+    }
+
+    const response = await admin.graphql(
+      `#graphql
+        mutation returnDeclineRequest($input: ReturnDeclineRequestInput!) {
+          returnDeclineRequest(input: $input) {
+            return { id status }
+            userErrors { field message }
+          }
+        }
+      `,
+      { variables: { input: { id: record.shopifyReturnId, declineReason: "OTHER" } } },
+    );
+    const data = await response.json();
+    const userErrors = data.data?.returnDeclineRequest?.userErrors || [];
+    const blockingErrors = userErrors.filter((e: any) => {
+      const msg = String(e.message || "").toLowerCase();
+      if (msg.includes("already")) return false;
+      if (msg.includes("not declinable")) return false;
+      if (msg.includes("only non-refunded returns with status requested can be declined")) return false;
+      return true;
+    });
+    if (blockingErrors.length > 0) {
+      return { ok: false, error: blockingErrors.map((e: any) => e.message).join(", ") };
+    }
+
+    const reconciledStatus = await fetchRemoteReturnStatus(record.shopifyReturnId);
+    const nextStatus = reconciledStatus === "CLOSED"
+      ? "COMPLETED"
+      : reconciledStatus === "APPROVED"
+        ? "APPROVED"
+        : "DECLINED";
+    await prisma.returnRequest.update({
+      where: { id: returnId },
+      data: { status: nextStatus },
+    });
+    await logReturnAction(returnId, "DECLINE_PENDING", { source: "decline_mutation", remoteStatus: reconciledStatus || "UNKNOWN" });
+    if (nextStatus === "DECLINED") {
+      await dispatchReturnNotifications({
+        shop: session.shop,
+        event: "RETURN_DECLINED",
+        returnRequest: {
+          id: returnId,
+          orderName: record.orderName,
+          customerEmail: record.customerEmail,
+          reason: record.reason,
+          status: "DECLINED",
+          resolutionType: record.resolution?.type || null,
+        },
+      });
+    }
+    return { ok: true };
+  }
+
+  async function approvePending(returnId: string) {
+    const record = await prisma.returnRequest.findFirst({
+      where: { id: returnId, shop: session.shop },
+      include: { resolution: true },
+    });
+    if (!record) return { ok: false, error: "Return not found" };
+    if (record.status !== "REQUESTED") return { ok: false, error: "Return is not pending" };
+
+    if (!record.shopifyReturnId) {
+      await prisma.returnRequest.update({
+        where: { id: returnId },
+        data: { status: "APPROVED" },
+      });
+      await logReturnAction(returnId, "APPROVE_PENDING", { source: "local_only" });
+      await dispatchReturnNotifications({
+        shop: session.shop,
+        event: "RETURN_APPROVED",
+        returnRequest: {
+          id: returnId,
+          orderName: record.orderName,
+          customerEmail: record.customerEmail,
+          reason: record.reason,
+          status: "APPROVED",
+          resolutionType: record.resolution?.type || null,
+        },
+      });
+      return { ok: true, status: "APPROVED" as const };
+    }
+
+    const remoteStatus = await fetchRemoteReturnStatus(record.shopifyReturnId);
+    if (remoteStatus === "APPROVED") {
+      await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "APPROVED" } });
+      await logReturnAction(returnId, "APPROVE_PENDING", { source: "remote_reconciled", remoteStatus });
+      return { ok: true, status: "APPROVED" as const };
+    }
+    if (remoteStatus === "CLOSED") {
+      await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "COMPLETED" } });
+      await logReturnAction(returnId, "APPROVE_PENDING_SKIPPED", { source: "remote_reconciled", remoteStatus });
+      return { ok: true, status: "COMPLETED" as const };
+    }
+    if (["DECLINED", "CANCELLED"].includes(remoteStatus)) {
+      await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "DECLINED" } });
+      await logReturnAction(returnId, "APPROVE_PENDING_SKIPPED", { source: "remote_reconciled", remoteStatus });
+      return { ok: true, status: "DECLINED" as const };
+    }
+
+    if (record.shopifyReturnId) {
+      const response = await admin.graphql(
+        `#graphql
+          mutation returnApproveRequest($input: ReturnApproveRequestInput!) {
+            returnApproveRequest(input: $input) {
+              return { id status }
+              userErrors { field message }
+            }
+          }
+        `,
+        { variables: { input: { id: record.shopifyReturnId } } },
+      );
+      const data = await response.json();
+      const userErrors = data.data?.returnApproveRequest?.userErrors || [];
+      const blockingErrors = userErrors.filter((e: any) => {
+        const msg = String(e.message || "").toLowerCase();
+        if (msg.includes("already")) return false;
+        if (msg.includes("not approvable")) return false;
+        if (msg.includes("only returns with status requested can be approved")) return false;
+        return true;
+      });
+      if (blockingErrors.length > 0) {
+        return { ok: false, error: blockingErrors.map((e: any) => e.message).join(", ") };
+      }
+
+      const reconciledStatus = await fetchRemoteReturnStatus(record.shopifyReturnId);
+      if (reconciledStatus === "CLOSED") {
+        await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "COMPLETED" } });
+        await logReturnAction(returnId, "APPROVE_PENDING", { source: "approve_mutation", remoteStatus: reconciledStatus });
+        return { ok: true, status: "COMPLETED" as const };
+      }
+      if (["DECLINED", "CANCELLED"].includes(reconciledStatus)) {
+        await prisma.returnRequest.update({ where: { id: returnId }, data: { status: "DECLINED" } });
+        await logReturnAction(returnId, "APPROVE_PENDING_SKIPPED", { source: "approve_mutation", remoteStatus: reconciledStatus });
+        return { ok: true, status: "DECLINED" as const };
+      }
+    }
+
+    await prisma.returnRequest.update({
+      where: { id: returnId },
+      data: { status: "APPROVED" },
+    });
+    await logReturnAction(returnId, "APPROVE_PENDING", { source: "quick_modal" });
+    await dispatchReturnNotifications({
+      shop: session.shop,
+      event: "RETURN_APPROVED",
+      returnRequest: {
+        id: returnId,
+        orderName: record.orderName,
+        customerEmail: record.customerEmail,
+        reason: record.reason,
+        status: "APPROVED",
+        resolutionType: record.resolution?.type || null,
+      },
+    });
+    return { ok: true, status: "APPROVED" as const };
+  }
+
+  async function completeApproved(returnId: string, completionMode: "REFUND_DONE" | "ITEM_RESENT") {
+    const record = await prisma.returnRequest.findFirst({
+      where: { id: returnId, shop: session.shop },
+      include: { resolution: true },
+    });
+    if (!record) return { ok: false, error: "Return not found" };
+    if (record.status !== "APPROVED") return { ok: false, error: "Return is not approved" };
+
+    if (record.resolution?.type === "REFUND" && record.shopifyReturnId) {
+      await admin.graphql(
+        `#graphql
+          mutation returnClose($id: ID!) {
+            returnClose(id: $id) {
+              return { id status }
+              userErrors { field message }
+            }
+          }
+        `,
+        { variables: { id: record.shopifyReturnId } },
+      );
+    }
+
+    await prisma.returnRequest.update({
+      where: { id: returnId },
+      data: { status: "COMPLETED" },
+    });
+    await logReturnAction(returnId, "COMPLETE_APPROVED", { source: "quick_modal", completionMode });
+    await dispatchReturnNotifications({
+      shop: session.shop,
+      event: "RETURN_COMPLETED",
+      returnRequest: {
+        id: returnId,
+        orderName: record.orderName,
+        customerEmail: record.customerEmail,
+        reason: record.reason,
+        status: "COMPLETED",
+        resolutionType: record.resolution?.type || null,
+      },
+    });
+    return { ok: true };
+  }
+
   if (intent === "sync") {
     // Fetch orders with returns from Shopify
     let synced = 0;
@@ -596,22 +871,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "quick_approve") {
+    const id = (formData.get("id") as string) || "";
+    const result = await approvePending(id);
+    if (!result.ok) return json({ quickError: result.error });
+    const success = result.status === "COMPLETED" ? "completed" : result.status === "DECLINED" ? "declined" : "approved";
+    return json({ quickSuccess: success });
+  }
+
+  if (intent === "quick_decline") {
+    const id = (formData.get("id") as string) || "";
+    const result = await declinePending(id);
+    if (!result.ok) return json({ quickError: result.error });
+    return json({ quickSuccess: "declined" });
+  }
+
+  if (intent === "quick_complete") {
+    const id = (formData.get("id") as string) || "";
+    const completionMode = ((formData.get("completionMode") as string) || "REFUND_DONE") as "REFUND_DONE" | "ITEM_RESENT";
+    const result = await completeApproved(id, completionMode);
+    if (!result.ok) return json({ quickError: result.error });
+    return json({ quickSuccess: "completed" });
+  }
+
   if (intent === "manual_create") {
     const orderName = (formData.get("orderName") as string)?.trim();
     const orderId = (formData.get("orderId") as string)?.trim();
     const customerEmail = (formData.get("customerEmail") as string)?.trim();
-    const reasonList = JSON.parse((formData.get("reasonList") as string) || "[]");
-    const otherReasonText = ((formData.get("otherReasonText") as string) || "").trim();
-    const normalizedReasons = Array.isArray(reasonList) ? reasonList : [];
-    if (normalizedReasons.length === 0) {
-      return json({ manualError: "En az bir iade nedeni seçmelisiniz." });
+    const adminReason = (formData.get("adminReason") as string)?.trim();
+    const notifyCustomer = formData.get("notifyCustomer") === "true";
+    const emailSubject = (formData.get("emailSubject") as string)?.trim();
+    const emailBody = (formData.get("emailBody") as string)?.trim();
+    
+    if (!adminReason) {
+      return json({ manualError: "Yönetici iade nedeni seçmelisiniz." });
     }
-    if (normalizedReasons.includes("OTHER") && !otherReasonText) {
-      return json({ manualError: "Diğer nedeni seçtiğinizde açıklama girmelisiniz." });
-    }
-    const reason = normalizedReasons
-      .map((r: string) => (r === "OTHER" && otherReasonText ? `OTHER: ${otherReasonText}` : r))
-      .join(", ");
+    
+    const reason = `ADMIN: ${adminReason}`;
     const resolutionType = (formData.get("resolutionType") as string) || "REFUND";
     const itemTitle = (formData.get("itemTitle") as string)?.trim() || "Manual item";
     const productId = (formData.get("productId") as string)?.trim() || "manual";
@@ -682,7 +978,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
 
-    return json({ manualCreatedId: created.id });
+    // Send admin-specific email notification if requested
+    let emailSent = false;
+    let emailErrorMsg = "";
+    
+    if (notifyCustomer && customerEmail && emailBody) {
+      // First check if email settings are configured
+      const settings = await prisma.storeSettings.findUnique({ where: { shop: session.shop } });
+      if (!settings?.resendApiKey || !settings?.emailFrom) {
+        emailErrorMsg = "E-posta ayarları (Resend API Key ve Gönderen E-posta) eksik olduğu için müşteriye bildirim gönderilemedi. Lütfen ayarları kontrol edin.";
+      } else {
+        try {
+          // Send email notification
+          await dispatchReturnNotifications({
+            shop: session.shop,
+            event: "CUSTOM_EMAIL",
+            returnRequest: {
+              id: created.id,
+              orderName: created.orderName,
+              customerEmail: created.customerEmail,
+              reason: created.reason,
+              status: created.status,
+              resolutionType,
+              amount: quantity * price,
+              customSubject: emailSubject || "İade İşleminiz Hakkında",
+              customMessage: emailBody,
+            },
+          });
+          emailSent = true;
+        } catch (emailError: any) {
+          console.error("Failed to send admin email notification:", emailError);
+          emailErrorMsg = `E-posta gönderimi başarısız oldu: ${emailError.message}`;
+        }
+      }
+    }
+
+    return json({ 
+      manualCreatedId: created.id,
+      emailWarning: emailErrorMsg || undefined
+    });
   }
 
   return json({});
@@ -711,10 +1045,21 @@ export default function Returns() {
   const [manualVariantId, setManualVariantId] = useState("manual");
   const [manualQuantity, setManualQuantity] = useState("1");
   const [manualPrice, setManualPrice] = useState("0");
+  const [manualAdminReason, setManualAdminReason] = useState("");
+  const [manualNotifyCustomer, setManualNotifyCustomer] = useState(true);
+  const [manualEmailSubject, setManualEmailSubject] = useState("İade İşleminiz Hakkında");
+  const [manualEmailBody, setManualEmailBody] = useState("Merhaba,\n\nİade işleminiz başarıyla oluşturulmuştur.");
+  const [quickModalOpen, setQuickModalOpen] = useState(false);
+  const [quickReturn, setQuickReturn] = useState<any | null>(null);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [sortColumn, setSortColumn] = useState<string>("createdAt");
+  const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("descending");
 
   const isSyncing = navigation.state !== "idle" && navigation.formData?.get("intent") === "sync";
   const isBulkSubmitting = navigation.state !== "idle" && navigation.formData?.get("intent") === "bulk_pending_action";
   const isManualSubmitting = navigation.state !== "idle" && navigation.formData?.get("intent") === "manual_create";
+  const isQuickSubmitting = navigation.state !== "idle" && String(navigation.formData?.get("intent") || "").startsWith("quick_");
 
   const reasonChoices = [
     { label: t["reason.SIZE"] || "SIZE", value: "SIZE" },
@@ -722,6 +1067,15 @@ export default function Returns() {
     { label: t["reason.DEFECTIVE"] || "DEFECTIVE", value: "DEFECTIVE" },
     { label: t["reason.UNWANTED"] || "UNWANTED", value: "UNWANTED" },
     { label: t["reason.OTHER"] || "OTHER", value: "OTHER" },
+  ];
+
+  const adminReasonChoices = [
+    { label: t["returns.adminReason.OUT_OF_STOCK"] || "Out of Stock", value: "OUT_OF_STOCK" },
+    { label: t["returns.adminReason.DAMAGED_INVENTORY"] || "Damaged Inventory", value: "DAMAGED_INVENTORY" },
+    { label: t["returns.adminReason.GHOST_INVENTORY"] || "Ghost Inventory", value: "GHOST_INVENTORY" },
+    { label: t["returns.adminReason.CUSTOMER_REQUEST"] || "Customer Request", value: "CUSTOMER_REQUEST" },
+    { label: t["returns.adminReason.ORDER_ERROR"] || "Order Error", value: "ORDER_ERROR" },
+    { label: t["returns.adminReason.QUALITY_ISSUE"] || "Quality Issue", value: "QUALITY_ISSUE" },
   ];
 
   const orderOptions = manualOrders
@@ -741,6 +1095,8 @@ export default function Returns() {
   const status = searchParams.get("status") || "";
   const type = searchParams.get("type") || "";
   const search = searchParams.get("search") || "";
+  const sortBy = searchParams.get("sortBy") || "createdAt";
+  const sortOrder = searchParams.get("sortOrder") || "desc";
 
   const statusBadge = (s: string) => {
     const tone: Record<string, any> = {
@@ -761,6 +1117,19 @@ export default function Returns() {
   };
 
   const clearFilters = () => setSearchParams({});
+
+  const handleSort = (column: string) => {
+    const newSortOrder = sortBy === column && sortOrder === "asc" ? "desc" : "asc";
+    const params = new URLSearchParams(searchParams);
+    params.set("sortBy", column);
+    params.set("sortOrder", newSortOrder);
+    setSearchParams(params);
+  };
+
+  const openCustomerModal = (returnItem: any) => {
+    setSelectedCustomer(returnItem);
+    setCustomerModalOpen(true);
+  };
 
   const filters = [
     {
@@ -833,10 +1202,30 @@ export default function Returns() {
       <IndexTable.Cell>{resLabel(r.resolution?.type)}</IndexTable.Cell>
       <IndexTable.Cell>{r.items.length} {t["returns.items"]}</IndexTable.Cell>
       <IndexTable.Cell>
-        {new Date(r.createdAt).toLocaleDateString(locale === "tr" ? "tr-TR" : "en-US")}
+        <BlockStack gap="100">
+          <Text as="span" variant="bodySm">
+            {new Date(r.createdAt).toLocaleDateString(locale === "tr" ? "tr-TR" : "en-US")}
+          </Text>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {new Date(r.createdAt).toLocaleTimeString(locale === "tr" ? "tr-TR" : "en-US", {
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </Text>
+        </BlockStack>
       </IndexTable.Cell>
       <IndexTable.Cell>
-        <Button size="slim" onClick={() => navigate(`/app/returns/${r.id}`)}>
+        <Button
+          size="slim"
+          onClick={() => {
+            if (r.status === "REQUESTED" || r.status === "APPROVED") {
+              setQuickReturn(r);
+              setQuickModalOpen(true);
+              return;
+            }
+            openCustomerModal(r);
+          }}
+        >
           {t["returns.viewDetail"] || "Detay"}
         </Button>
       </IndexTable.Cell>
@@ -874,12 +1263,27 @@ export default function Returns() {
         )}
         {actionData?.manualCreatedId && (
           <Banner tone="success" onDismiss={() => {}}>
-            {`Manuel iade oluşturuldu: ${actionData.manualCreatedId}`}
+            <BlockStack gap="100">
+              <Text as="p">{`Manuel iade oluşturuldu: ${actionData.manualCreatedId}`}</Text>
+              {actionData.emailWarning && (
+                <Text as="p" tone="critical">{actionData.emailWarning}</Text>
+              )}
+            </BlockStack>
           </Banner>
         )}
         {actionData?.manualError && (
           <Banner tone="critical" onDismiss={() => {}}>
             {actionData.manualError}
+          </Banner>
+        )}
+        {actionData?.quickError && (
+          <Banner tone="critical" onDismiss={() => {}}>
+            {actionData.quickError}
+          </Banner>
+        )}
+        {actionData?.quickSuccess && (
+          <Banner tone="success" onDismiss={() => {}}>
+            {t[`detail.${actionData.quickSuccess}`] || actionData.quickSuccess}
           </Banner>
         )}
 
@@ -927,9 +1331,204 @@ export default function Returns() {
           </Button>
         </InlineStack>
 
+        <Modal
+          open={quickModalOpen}
+          onClose={() => {
+            setQuickModalOpen(false);
+            setQuickReturn(null);
+          }}
+          title={quickReturn ? `${quickReturn.orderName} • ${translateReason(quickReturn.reason || "OTHER", t)}` : (t["returns.quickProcess"] || "Hızlı İşlem")}
+          primaryAction={quickReturn?.status === "REQUESTED" ? {
+            content: t["detail.approveOnly"] || "Talebi Onayla",
+            loading: isQuickSubmitting,
+            onAction: () => {
+              if (!quickReturn) return;
+              const fd = new FormData();
+              fd.set("intent", "quick_approve");
+              fd.set("id", quickReturn.id);
+              submit(fd, { method: "post" });
+              setQuickModalOpen(false);
+              setQuickReturn(null);
+            },
+          } : undefined}
+          secondaryActions={[
+            ...(quickReturn?.status === "REQUESTED"
+              ? [{
+                  content: t["detail.rejectRequest"] || "Reddet",
+                  destructive: true,
+                  onAction: () => {
+                    if (!quickReturn) return;
+                    const fd = new FormData();
+                    fd.set("intent", "quick_decline");
+                    fd.set("id", quickReturn.id);
+                    submit(fd, { method: "post" });
+                    setQuickModalOpen(false);
+                    setQuickReturn(null);
+                  },
+                }]
+              : []),
+            ...(quickReturn?.status === "APPROVED"
+              ? [
+                  {
+                    content: t["returns.refundComplete"] || "Ücreti İade Et ve Tamamla",
+                    onAction: () => {
+                      if (!quickReturn) return;
+                      const fd = new FormData();
+                      fd.set("intent", "quick_complete");
+                      fd.set("id", quickReturn.id);
+                      fd.set("completionMode", "REFUND_DONE");
+                      submit(fd, { method: "post" });
+                      setQuickModalOpen(false);
+                      setQuickReturn(null);
+                    },
+                  },
+                  {
+                    content: t["returns.resendComplete"] || "Ürünü Gönderildi Olarak Tamamla",
+                    onAction: () => {
+                      if (!quickReturn) return;
+                      const fd = new FormData();
+                      fd.set("intent", "quick_complete");
+                      fd.set("id", quickReturn.id);
+                      fd.set("completionMode", "ITEM_RESENT");
+                      submit(fd, { method: "post" });
+                      setQuickModalOpen(false);
+                      setQuickReturn(null);
+                    },
+                  },
+                ]
+              : []),
+            {
+              content: t["returns.fullDetail"] || "Detay Sayfasına Git",
+              onAction: () => {
+                if (!quickReturn) return;
+                navigate(`/app/returns/${quickReturn.id}`);
+                setQuickModalOpen(false);
+                setQuickReturn(null);
+              },
+            },
+          ]}
+        >
+          <Modal.Section>
+            {quickReturn && (
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">{quickReturn.customerEmail}</Text>
+                <Text as="p" variant="bodySm">
+                  {`${t["returns.status"] || "Durum"}: ${t[`status.${quickReturn.status}`] || quickReturn.status}`}
+                </Text>
+                <Text as="p" variant="bodySm">
+                  {`${t["returns.resolution"] || "Çözüm"}: ${resLabel(quickReturn.resolution?.type)}`}
+                </Text>
+                {quickReturn.status === "APPROVED" && (
+                  <Banner tone="info">
+                    {t["returns.approvedQuickHelp"] || "Onaylanan iadede ücret iadesi veya ürün yeniden gönderiminden sonra bu pencereden süreci tamamlayabilirsiniz."}
+                  </Banner>
+                )}
+              </BlockStack>
+            )}
+          </Modal.Section>
+        </Modal>
+
+        <Modal
+          open={customerModalOpen}
+          onClose={() => {
+            setCustomerModalOpen(false);
+            setSelectedCustomer(null);
+          }}
+          title={selectedCustomer ? `${t["returns.customerDetail"] || "Customer Details"} - ${selectedCustomer.orderName}` : ""}
+          primaryAction={{
+            content: t["returns.viewDetail"] || "View Full Detail",
+            onAction: () => {
+              if (selectedCustomer) {
+                navigate(`/app/returns/${selectedCustomer.id}`);
+                setCustomerModalOpen(false);
+                setSelectedCustomer(null);
+              }
+            },
+          }}
+          secondaryActions={[{
+            content: "Kapat",
+            onAction: () => {
+              setCustomerModalOpen(false);
+              setSelectedCustomer(null);
+            },
+          }]}
+        >
+          <Modal.Section>
+            {selectedCustomer && (
+              <BlockStack gap="300">
+                <Card padding="200">
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingSm">{t["returns.orderDetail"] || "Order Details"}</Text>
+                    <InlineStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="bold">{t["returns.order"]}:</Text>
+                      <Text as="span" variant="bodySm">{selectedCustomer.orderName}</Text>
+                    </InlineStack>
+                    <InlineStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="bold">{t["returns.customer"]}:</Text>
+                      <Text as="span" variant="bodySm">{selectedCustomer.customerEmail}</Text>
+                    </InlineStack>
+                    <InlineStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="bold">{t["returns.status"]}:</Text>
+                      {statusBadge(selectedCustomer.status)}
+                    </InlineStack>
+                    <InlineStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="bold">{t["returns.reason"]}:</Text>
+                      <Text as="span" variant="bodySm">{translateReason(selectedCustomer.reason || "OTHER", t)}</Text>
+                    </InlineStack>
+                    <InlineStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="bold">{t["returns.resolution"]}:</Text>
+                      <Text as="span" variant="bodySm">{resLabel(selectedCustomer.resolution?.type)}</Text>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+                <Card padding="200">
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingSm">{t["returns.products"] || "Products"}</Text>
+                    {selectedCustomer.items.map((item: any, index: number) => (
+                      <InlineStack key={index} gap="200" align="space-between">
+                        <Text as="span" variant="bodySm">{item.title}</Text>
+                        <Text as="span" variant="bodySm" tone="subdued">{item.quantity} x {item.price}</Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                </Card>
+                <Card padding="200">
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingSm">{t["returns.date"] || "Date"}</Text>
+                    <InlineStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="bold">{t["returns.createdAt"]}:</Text>
+                      <Text as="span" variant="bodySm">
+                        {new Date(selectedCustomer.createdAt).toLocaleDateString(locale === "tr" ? "tr-TR" : "en-US")}
+                        {" "}
+                        {new Date(selectedCustomer.createdAt).toLocaleTimeString(locale === "tr" ? "tr-TR" : "en-US", {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </Text>
+                    </InlineStack>
+                    {selectedCustomer.updatedAt !== selectedCustomer.createdAt && (
+                      <InlineStack gap="200">
+                        <Text as="span" variant="bodySm" fontWeight="bold">{t["returns.updatedAt"]}:</Text>
+                        <Text as="span" variant="bodySm">
+                          {new Date(selectedCustomer.updatedAt).toLocaleDateString(locale === "tr" ? "tr-TR" : "en-US")}
+                          {" "}
+                          {new Date(selectedCustomer.updatedAt).toLocaleTimeString(locale === "tr" ? "tr-TR" : "en-US", {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </Text>
+                      </InlineStack>
+                    )}
+                  </BlockStack>
+                </Card>
+              </BlockStack>
+            )}
+          </Modal.Section>
+        </Modal>
+
         <Card>
           <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">{t["returns.manualCreate"] || "Manuel iade oluştur"}</Text>
+            <Text as="h2" variant="headingMd">{t["returns.adminCreate"] || "Yönetici Tarafından İade Oluştur"}</Text>
             <InlineStack gap="200" align="start">
               <Autocomplete
                 options={orderOptions}
@@ -1032,20 +1631,61 @@ export default function Returns() {
               />
             </InlineStack>
             <ChoiceList
-              title={t["returns.reason"]}
-              allowMultiple
-              choices={reasonChoices}
-              selected={manualReasonList}
-              onChange={setManualReasonList}
+              title={t["returns.adminCreateReasons"] || "Admin Return Reasons"}
+              choices={adminReasonChoices}
+              selected={manualAdminReason ? [manualAdminReason] : []}
+              onChange={(selected) => {
+                const reason = selected[0] || "";
+                setManualAdminReason(reason);
+                
+                // Seçilen nedene göre Türkçe e-posta şablonunu otomatik doldur
+                if (reason === "OUT_OF_STOCK" || reason === "DAMAGED_INVENTORY" || reason === "GHOST_INVENTORY") {
+                  setManualEmailSubject("Siparişiniz Hakkında - Ürün Temin Edilemiyor");
+                  setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" stoklarımızda kalmadığı/hasarlı olduğu için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
+                } else if (reason === "QUALITY_ISSUE") {
+                  setManualEmailSubject("Siparişiniz Hakkında - Kalite Kontrol");
+                  setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" kalite kontrol standartlarımızı geçemediği için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
+                } else if (reason === "ORDER_ERROR") {
+                  setManualEmailSubject("Siparişiniz Hakkında - Sistem Hatası");
+                  setManualEmailBody(`Merhaba,\n\nSiparişinizin işlenmesi sırasında sistemsel bir hata oluştuğu için "${manualItemTitle || 'ilgili ürün'}" için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
+                } else {
+                  setManualEmailSubject("İade İşleminiz Hakkında");
+                  setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" için iade işleminiz başarıyla oluşturulmuş ve ücret iadeniz gerçekleştirilmiştir.`);
+                }
+              }}
             />
-            {manualReasonList.includes("OTHER") && (
-              <TextField
-                label={t["returns.otherReasonText"] || "Diğer neden açıklaması"}
-                value={otherReasonText}
-                onChange={setOtherReasonText}
-                autoComplete="off"
-              />
-            )}
+            <Card padding="200">
+              <BlockStack gap="200">
+                <Text as="h3" variant="headingSm">{t["returns.notifyCustomer"] || "Notify Customer"}</Text>
+                <InlineStack gap="200" align="start">
+                  <ChoiceList
+                    title={t["returns.notifyCustomer"] || "Notify Customer"}
+                    titleHidden
+                    choices={[{ label: t["returns.notifyCustomerHelp"] || "İade oluşturulduğunda müşteriye e-posta gönder", value: "notify" }]}
+                    selected={manualNotifyCustomer ? ["notify"] : []}
+                    onChange={(selected) => setManualNotifyCustomer(selected.includes("notify"))}
+                  />
+                </InlineStack>
+                {manualNotifyCustomer && (
+                  <BlockStack gap="300">
+                    <TextField
+                      label="E-posta Konusu"
+                      value={manualEmailSubject}
+                      onChange={setManualEmailSubject}
+                      autoComplete="off"
+                    />
+                    <TextField
+                      label="E-posta Mesajı"
+                      value={manualEmailBody}
+                      onChange={setManualEmailBody}
+                      autoComplete="off"
+                      multiline={6}
+                      helpText="Bu mesaj tam olarak yazdığınız şekilde müşteriye gönderilecektir."
+                    />
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
             <InlineStack gap="200" align="start">
               <Select
                 label={t["returns.resolution"]}
@@ -1074,8 +1714,10 @@ export default function Returns() {
                   fd.set("orderId", manualOrderId);
                   fd.set("orderName", manualOrderName);
                   fd.set("customerEmail", manualCustomerEmail);
-                  fd.set("reasonList", JSON.stringify(manualReasonList));
-                  fd.set("otherReasonText", otherReasonText);
+                  fd.set("adminReason", manualAdminReason);
+                  fd.set("notifyCustomer", String(manualNotifyCustomer));
+                  fd.set("emailSubject", manualEmailSubject);
+                  fd.set("emailBody", manualEmailBody);
                   fd.set("resolutionType", manualResolutionType);
                   fd.set("productId", manualProductId);
                   fd.set("variantId", manualVariantId);
@@ -1085,7 +1727,7 @@ export default function Returns() {
                   submit(fd, { method: "post" });
                 }}
               >
-                {t["returns.manualCreate"] || "Manuel iade oluştur"}
+                {t["returns.adminCreate"] || "Yönetici Tarafından İade Oluştur"}
               </Button>
             </ButtonGroup>
           </BlockStack>
@@ -1105,16 +1747,60 @@ export default function Returns() {
             resourceName={{ singular: "return", plural: "returns" }}
             itemCount={returns.length}
             emptyState={emptyState}
+            sortDirection="descending"
             headings={[
-              { title: t["returns.order"] },
-              { title: t["returns.customer"] },
-              { title: t["returns.status"] },
-              { title: t["returns.reason"] },
-              { title: t["returns.resolution"] },
-              { title: t["returns.products"] },
-              { title: t["returns.date"] },
+              { 
+                title: t["returns.order"], 
+                sortable: true, 
+                sorted: sortBy === "orderName",
+                sortDirection: sortBy === "orderName" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
+                onSort: () => handleSort("orderName")
+              },
+              { 
+                title: t["returns.customer"], 
+                sortable: true, 
+                sorted: sortBy === "customerEmail",
+                sortDirection: sortBy === "customerEmail" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
+                onSort: () => handleSort("customerEmail")
+              },
+              { 
+                title: t["returns.status"], 
+                sortable: true, 
+                sorted: sortBy === "status",
+                sortDirection: sortBy === "status" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
+                onSort: () => handleSort("status")
+              },
+              { 
+                title: t["returns.reason"], 
+                sortable: true, 
+                sorted: sortBy === "reason",
+                sortDirection: sortBy === "reason" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
+                onSort: () => handleSort("reason")
+              },
+              { 
+                title: t["returns.resolution"], 
+                sortable: true, 
+                sorted: sortBy === "resolution",
+                sortDirection: sortBy === "resolution" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
+                onSort: () => handleSort("resolution")
+              },
+              { 
+                title: t["returns.products"], 
+                sortable: true, 
+                sorted: sortBy === "itemsCount",
+                sortDirection: sortBy === "itemsCount" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
+                onSort: () => handleSort("itemsCount")
+              },
+              { 
+                title: t["returns.date"], 
+                sortable: true, 
+                sorted: sortBy === "createdAt",
+                sortDirection: sortBy === "createdAt" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
+                onSort: () => handleSort("createdAt")
+              },
               { title: t["returns.action"] || "İşlem" },
             ]}
+            sortDirection={sortOrder === "asc" ? "ascending" : "descending"}
             selectable
             selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
             onSelectionChange={handleSelectionChange}
