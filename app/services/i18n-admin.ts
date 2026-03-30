@@ -659,6 +659,7 @@ const REASON_KEY_MAP: Record<string, string> = {
   "DEFECTIVE": "reason.DEFECTIVE",
   "UNWANTED": "reason.UNWANTED",
   "OTHER": "reason.OTHER",
+  "UNKNOWN": "reason.OTHER",
   // Old Turkish values (legacy DB entries)
   "Beden uymuyor": "reason.SIZE",
   "Renk/model farklı": "reason.COLOR",

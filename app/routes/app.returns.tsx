@@ -1747,60 +1747,16 @@ export default function Returns() {
             resourceName={{ singular: "return", plural: "returns" }}
             itemCount={returns.length}
             emptyState={emptyState}
-            sortDirection="descending"
             headings={[
-              { 
-                title: t["returns.order"], 
-                sortable: true, 
-                sorted: sortBy === "orderName",
-                sortDirection: sortBy === "orderName" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
-                onSort: () => handleSort("orderName")
-              },
-              { 
-                title: t["returns.customer"], 
-                sortable: true, 
-                sorted: sortBy === "customerEmail",
-                sortDirection: sortBy === "customerEmail" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
-                onSort: () => handleSort("customerEmail")
-              },
-              { 
-                title: t["returns.status"], 
-                sortable: true, 
-                sorted: sortBy === "status",
-                sortDirection: sortBy === "status" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
-                onSort: () => handleSort("status")
-              },
-              { 
-                title: t["returns.reason"], 
-                sortable: true, 
-                sorted: sortBy === "reason",
-                sortDirection: sortBy === "reason" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
-                onSort: () => handleSort("reason")
-              },
-              { 
-                title: t["returns.resolution"], 
-                sortable: true, 
-                sorted: sortBy === "resolution",
-                sortDirection: sortBy === "resolution" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
-                onSort: () => handleSort("resolution")
-              },
-              { 
-                title: t["returns.products"], 
-                sortable: true, 
-                sorted: sortBy === "itemsCount",
-                sortDirection: sortBy === "itemsCount" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
-                onSort: () => handleSort("itemsCount")
-              },
-              { 
-                title: t["returns.date"], 
-                sortable: true, 
-                sorted: sortBy === "createdAt",
-                sortDirection: sortBy === "createdAt" ? (sortOrder === "asc" ? "ascending" : "descending") : undefined,
-                onSort: () => handleSort("createdAt")
-              },
-              { title: t["returns.action"] || "İşlem" },
+              { id: "orderName", title: <span style={{cursor:"pointer",userSelect:"none"}} onClick={() => handleSort("orderName")}>{t["returns.order"]} {sortBy==="orderName" ? (sortOrder==="asc"?"↑":"↓") : ""}</span> },
+              { id: "customerEmail", title: <span style={{cursor:"pointer",userSelect:"none"}} onClick={() => handleSort("customerEmail")}>{t["returns.customer"]} {sortBy==="customerEmail" ? (sortOrder==="asc"?"↑":"↓") : ""}</span> },
+              { id: "status", title: <span style={{cursor:"pointer",userSelect:"none"}} onClick={() => handleSort("status")}>{t["returns.status"]} {sortBy==="status" ? (sortOrder==="asc"?"↑":"↓") : ""}</span> },
+              { id: "reason", title: <span style={{cursor:"pointer",userSelect:"none"}} onClick={() => handleSort("reason")}>{t["returns.reason"]} {sortBy==="reason" ? (sortOrder==="asc"?"↑":"↓") : ""}</span> },
+              { id: "resolution", title: <span style={{cursor:"pointer",userSelect:"none"}} onClick={() => handleSort("resolution")}>{t["returns.resolution"]} {sortBy==="resolution" ? (sortOrder==="asc"?"↑":"↓") : ""}</span> },
+              { id: "itemsCount", title: <span style={{cursor:"pointer",userSelect:"none"}} onClick={() => handleSort("itemsCount")}>{t["returns.products"]} {sortBy==="itemsCount" ? (sortOrder==="asc"?"↑":"↓") : ""}</span> },
+              { id: "createdAt", title: <span style={{cursor:"pointer",userSelect:"none"}} onClick={() => handleSort("createdAt")}>{t["returns.date"]} {sortBy==="createdAt" ? (sortOrder==="asc"?"↑":"↓") : ""}</span> },
+              { id: "action", title: t["returns.action"] || "İşlem" },
             ]}
-            sortDirection={sortOrder === "asc" ? "ascending" : "descending"}
             selectable
             selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
             onSelectionChange={handleSelectionChange}
