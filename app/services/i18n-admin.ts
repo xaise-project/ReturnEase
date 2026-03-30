@@ -673,11 +673,41 @@ const REASON_KEY_MAP: Record<string, string> = {
   "NOT_AS_DESCRIBED": "reason.DEFECTIVE",
 };
 
+const ADMIN_REASON_LABELS: Record<string, string> = {
+  "OUT_OF_STOCK": "Out of Stock",
+  "DAMAGED_INVENTORY": "Damaged Item",
+  "GHOST_INVENTORY": "Inventory Error",
+  "SIZE_TOO_SMALL": "Wrong Size",
+  "SIZE_TOO_LARGE": "Wrong Size",
+  "STYLE": "Style / Color Mismatch",
+  "WRONG": "Wrong Item Sent",
+  "NOT_AS_DESCRIBED": "Not as Described",
+  "UNWANTED": "Customer Changed Mind",
+  "DEFECTIVE": "Defective Product",
+  "OTHER": "Other",
+};
+
 export function translateReason(reason: string, t: Record<string, string>): string {
-  // Reason may have a note after ":", e.g. "OTHER: some note"
-  const parts = reason.split(":");
-  const key = parts[0].trim();
-  const note = parts.slice(1).join(":").trim();
+  if (!reason) return t["reason.OTHER"] || "Other";
+
+  // Handle "ADMIN: REASON_CODE - optional note" format
+  if (reason.startsWith("ADMIN:")) {
+    const afterPrefix = reason.slice("ADMIN:".length).trim();
+    // afterPrefix may be "OUT_OF_STOCK" or "OUT_OF_STOCK - some note"
+    const dashIdx = afterPrefix.indexOf(" - ");
+    const adminKey = dashIdx >= 0 ? afterPrefix.slice(0, dashIdx).trim() : afterPrefix.trim();
+    const adminNote = dashIdx >= 0 ? afterPrefix.slice(dashIdx + 3).trim() : "";
+    const translationKey = REASON_KEY_MAP[adminKey];
+    const label = translationKey
+      ? (t[translationKey] || ADMIN_REASON_LABELS[adminKey] || adminKey)
+      : (ADMIN_REASON_LABELS[adminKey] || adminKey);
+    return adminNote ? `${label} — ${adminNote}` : label;
+  }
+
+  // Standard "KEY: optional note" format
+  const colonIdx = reason.indexOf(":");
+  const key = colonIdx >= 0 ? reason.slice(0, colonIdx).trim() : reason.trim();
+  const note = colonIdx >= 0 ? reason.slice(colonIdx + 1).trim() : "";
 
   const translationKey = REASON_KEY_MAP[key];
   const translated = translationKey ? (t[translationKey] || key) : key;
