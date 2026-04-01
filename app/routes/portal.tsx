@@ -974,7 +974,7 @@ async function handleCreateReturn(
             create: {
               type: "KEEP_IT",
               amount: totalAmount,
-              currency: "TRY",
+              currency: "USD",
               metadata: { mode: "keep_it" },
             },
           },
@@ -1104,7 +1104,7 @@ async function handleCreateReturn(
             orderName,
             email,
             amount: priceDifference,
-            currencyCode: "TRY",
+            currencyCode: "USD",
           });
           if (!invoiceResult.ok) {
             return liquid(
@@ -1205,7 +1205,7 @@ async function handleCreateReturn(
             priceDifference: resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? priceDifference : null,
             paymentLinkUrl,
             discountCode: generatedDiscountCode,
-            currency: "TRY",
+            currency: "USD",
             metadata: resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? { priceDifference, paymentLinkUrl } : undefined,
           },
         },
@@ -1238,10 +1238,29 @@ async function handleCreateReturn(
       },
     });
 
-    // Issue store credit if resolution is STORE_CREDIT
-    if (resolutionType === "STORE_CREDIT" && customerId) {
+    // Issue Shopify native store credit if resolution is STORE_CREDIT
+    // Only runs when enableStoreCreditDiscountCode is OFF (native credit takes priority)
+    if (resolutionType === "STORE_CREDIT" && customerId && !settings?.enableStoreCreditDiscountCode) {
       try {
-        await admin.graphql(
+        // Step 1: Fetch the StoreCreditAccount GID for this customer
+        const scAccountResp = await admin.graphql(
+          `#graphql
+            query getStoreCreditAccount($customerId: ID!) {
+              customer(id: $customerId) {
+                storeCreditAccounts(first: 1) {
+                  edges { node { id } }
+                }
+              }
+            }
+          `,
+          { variables: { customerId } },
+        );
+        const scAccountData = await scAccountResp.json();
+        const scAccountId = scAccountData?.data?.customer?.storeCreditAccounts?.edges?.[0]?.node?.id;
+        const creditTargetId = scAccountId || customerId;
+
+        // Step 2: Issue the credit
+        const scMutResp = await admin.graphql(
           `#graphql
             mutation storeCreditAccountCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
               storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
@@ -1255,19 +1274,50 @@ async function handleCreateReturn(
           `,
           {
             variables: {
-              id: customerId,
+              id: creditTargetId,
               creditInput: {
-                creditAmount: {
-                  amount: totalAmount.toFixed(2),
-                  currencyCode: "TRY",
-                },
+                creditAmount: { amount: totalAmount.toFixed(2), currencyCode: "USD" },
               },
             },
           },
         );
+        const scMutData = await scMutResp.json();
+        const scErrors = scMutData?.data?.storeCreditAccountCredit?.userErrors || [];
+        if (scErrors.length > 0) {
+          // Log to ReturnActionLog so merchant can see it in admin
+          await prisma.returnActionLog.create({
+            data: {
+              shop,
+              returnRequestId: returnRequest.id,
+              action: "STORE_CREDIT_FAILED",
+              actor: "system:portal",
+              note: scErrors.map((e: any) => e.message).join(", "),
+              metadata: { customerId, amount: totalAmount, currencyCode: "USD" },
+            },
+          });
+        } else {
+          await prisma.returnActionLog.create({
+            data: {
+              shop,
+              returnRequestId: returnRequest.id,
+              action: "STORE_CREDIT_ISSUED",
+              actor: "system:portal",
+              note: `$${totalAmount.toFixed(2)} USD store credit issued`,
+              metadata: { customerId, scAccountId: creditTargetId, amount: totalAmount },
+            },
+          });
+        }
       } catch (scError: any) {
-        console.error("Store credit error:", scError);
-        // Store credit failed but return was created — continue
+        await prisma.returnActionLog.create({
+          data: {
+            shop,
+            returnRequestId: returnRequest.id,
+            action: "STORE_CREDIT_FAILED",
+            actor: "system:portal",
+            note: scError.message,
+            metadata: { customerId, amount: totalAmount },
+          },
+        });
       }
     }
 
@@ -1286,7 +1336,7 @@ async function handleCreateReturn(
           savedAmount: totalAmount,
           commissionRate: 0.02,
           commissionAmount,
-          currency: "TRY",
+          currency: "USD",
         },
       });
 
