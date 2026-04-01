@@ -564,7 +564,7 @@ export default function Settings() {
   ];
 
   return (
-    <Page>
+    <Page fullWidth>
       <TitleBar title={t["settings.title"]} />
       <BlockStack gap="400">
         {saved && !isSubmitting && (

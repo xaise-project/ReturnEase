@@ -63,7 +63,7 @@ export default function Index() {
   };
 
   return (
-    <Page>
+    <Page fullWidth>
       <TitleBar title="ReturnEase" />
       <BlockStack gap="500">
         <Layout>

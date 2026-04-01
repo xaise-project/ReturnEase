@@ -1235,7 +1235,7 @@ export default function Returns() {
   const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(returns);
 
   return (
-    <Page>
+    <Page fullWidth>
       <TitleBar title={t["returns.title"]} />
       <BlockStack gap="400">
         {/* Sync banner */}

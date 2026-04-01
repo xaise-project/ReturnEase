@@ -594,6 +594,7 @@ export default function ReturnDetail() {
 
   return (
     <Page
+      fullWidth
       backAction={{ url: "/app/returns" }}
       title={`${t["detail.return"]} — ${r.orderName}`}
       subtitle={r.customerEmail}

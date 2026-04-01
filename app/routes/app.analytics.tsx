@@ -345,7 +345,7 @@ export default function Analytics() {
   const trendUp = trendChange !== null && parseFloat(trendChange) >= 0;
 
   return (
-    <Page>
+    <Page fullWidth>
       <TitleBar title={t["analytics.title"]} />
       <BlockStack gap="500">
 
