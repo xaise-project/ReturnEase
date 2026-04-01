@@ -140,6 +140,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const keepItMaxAmount = parseFloat((formData.get("keepItMaxAmount") as string) || "0");
   const enablePriceDiffExchange = formData.get("enablePriceDiffExchange") === "true";
   const enableStoreCreditDiscountCode = formData.get("enableStoreCreditDiscountCode") === "true";
+  const storeCreditBonusRate = parseFloat((formData.get("storeCreditBonusRate") as string) || "0");
   const productReturnWindowsJson = (formData.get("productReturnWindowsJson") as string) || "{}";
   const collectionReturnWindowsJson = (formData.get("collectionReturnWindowsJson") as string) || "{}";
   const nonReturnableProductIds = parseJsonArray(formData.get("nonReturnableProductIds") as string);
@@ -203,6 +204,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       keepItMaxAmount,
       enablePriceDiffExchange,
       enableStoreCreditDiscountCode,
+      storeCreditBonusRate,
       productReturnWindowsJson,
       collectionReturnWindowsJson,
       nonReturnableProductIds: nonReturnableProductIds.join("\n") || null,
@@ -263,6 +265,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       keepItMaxAmount,
       enablePriceDiffExchange,
       enableStoreCreditDiscountCode,
+      storeCreditBonusRate,
       productReturnWindowsJson,
       collectionReturnWindowsJson,
       nonReturnableProductIds: nonReturnableProductIds.join("\n") || null,
@@ -337,6 +340,9 @@ export default function Settings() {
   const [enablePriceDiffExchange, setEnablePriceDiffExchange] = useState(settings?.enablePriceDiffExchange ?? false);
   const [enableStoreCreditDiscountCode, setEnableStoreCreditDiscountCode] = useState(
     settings?.enableStoreCreditDiscountCode ?? false,
+  );
+  const [storeCreditBonusRate, setStoreCreditBonusRate] = useState(
+    settings?.storeCreditBonusRate ? String(Number(settings.storeCreditBonusRate) * 100) : "0",
   );
   const [productWindows, setProductWindows] = useState<Record<string, string>>(() => {
     const parsed = parseJsonMap(settings?.productReturnWindowsJson);
@@ -459,6 +465,7 @@ export default function Settings() {
     formData.set("keepItMaxAmount", keepItMaxAmount);
     formData.set("enablePriceDiffExchange", String(enablePriceDiffExchange));
     formData.set("enableStoreCreditDiscountCode", String(enableStoreCreditDiscountCode));
+    formData.set("storeCreditBonusRate", String(parseFloat(storeCreditBonusRate || "0") / 100));
     formData.set(
       "productReturnWindowsJson",
       JSON.stringify(
@@ -784,6 +791,29 @@ export default function Settings() {
                       onChange={setEnableStoreCreditDiscountCode}
                       helpText={t["settings.enableStoreCreditDiscountCodeHelp"]}
                     />
+                    <div>
+                      <TextField
+                        label={t["settings.storeCreditBonusRate"] || "Store Credit Bonus (%)"}
+                        type="number"
+                        value={storeCreditBonusRate}
+                        onChange={setStoreCreditBonusRate}
+                        min={0}
+                        max={50}
+                        step={1}
+                        suffix="%"
+                        helpText={t["settings.storeCreditBonusRateHelp"] || "Customers choosing store credit will receive this % extra. E.g. 15 = they get $115 credit instead of $100 refund."}
+                        autoComplete="off"
+                      />
+                      {parseFloat(storeCreditBonusRate) > 0 && (
+                        <div style={{
+                          marginTop: 8, padding: "10px 14px",
+                          background: "#F0FDF4", border: "1px solid #BBF7D0",
+                          borderRadius: 8, fontSize: 13, color: "#166534",
+                        }}>
+                          ✅ {t["settings.storeCreditBonusPreview"] || "Portal will show:"} <strong>${"100.00"} refund — or — ${(100 * (1 + parseFloat(storeCreditBonusRate) / 100)).toFixed(2)} store credit (+{storeCreditBonusRate}%)</strong>
+                        </div>
+                      )}
+                    </div>
                     <Checkbox
                       label={t["settings.excludeDiscountedItems"]}
                       checked={excludeDiscountedItems}

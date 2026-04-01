@@ -815,6 +815,11 @@ async function handleCreateReturn(
       (sum: number, item: any) => sum + parseFloat(item.price) * item.quantity,
       0,
     );
+    // Apply store credit bonus if applicable
+    const storeCreditBonusRate = Number(settings?.storeCreditBonusRate || 0);
+    const effectiveAmount = resolutionType === "STORE_CREDIT" && storeCreditBonusRate > 0
+      ? Number((totalAmount * (1 + storeCreditBonusRate)).toFixed(2))
+      : totalAmount;
     const reasonKey = String(reason || "").split(":")[0].trim();
     const selectedProductIds = selectedItems.map((item: any) => item.productId).filter(Boolean);
     const selectedVariantIds = selectedItems.map((item: any) => item.variantId).filter(Boolean);
@@ -1201,12 +1206,16 @@ async function handleCreateReturn(
         resolution: {
           create: {
             type: resolutionType as any,
-            amount: totalAmount,
+            amount: effectiveAmount,
             priceDifference: resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? priceDifference : null,
             paymentLinkUrl,
             discountCode: generatedDiscountCode,
             currency: "USD",
-            metadata: resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? { priceDifference, paymentLinkUrl } : undefined,
+            metadata: resolutionType === "EXCHANGE_WITH_PRICE_DIFF"
+              ? { priceDifference, paymentLinkUrl }
+              : resolutionType === "STORE_CREDIT" && storeCreditBonusRate > 0
+                ? { bonusRate: storeCreditBonusRate, baseAmount: totalAmount, bonusAmount: effectiveAmount - totalAmount }
+                : undefined,
           },
         },
       },
@@ -1276,7 +1285,7 @@ async function handleCreateReturn(
             variables: {
               id: creditTargetId,
               creditInput: {
-                creditAmount: { amount: totalAmount.toFixed(2), currencyCode: "USD" },
+                creditAmount: { amount: effectiveAmount.toFixed(2), currencyCode: "USD" },
               },
             },
           },
@@ -1356,7 +1365,7 @@ async function handleCreateReturn(
               variables: {
                 subscriptionLineItemId: settings.shopifySubscriptionId,
                 price: { amount: commissionAmount.toFixed(2), currencyCode: "USD" },
-                description: `ReturnEase komisyon: ${resolutionType} - ${totalAmount.toFixed(2)} TRY üzerinden %2`,
+                description: `ReturnEase commission: ${resolutionType} - $${effectiveAmount.toFixed(2)} USD @ 2%`,
               },
             },
           );
@@ -1408,8 +1417,12 @@ async function handleCreateReturn(
       priceDifference: resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? priceDifference.toFixed(2) : null,
       paymentLinkUrl,
       discountCode: generatedDiscountCode,
-      totalAmount: totalAmount.toFixed(2),
-        fraudWarning,
+      totalAmount: effectiveAmount.toFixed(2),
+      baseAmount: totalAmount.toFixed(2),
+      storeCreditBonus: resolutionType === "STORE_CREDIT" && storeCreditBonusRate > 0
+        ? { rate: Math.round(storeCreditBonusRate * 100), extra: (effectiveAmount - totalAmount).toFixed(2) }
+        : null,
+      fraudWarning,
       isAutoApproved: shouldAutoApprove,
       lang, settings
     }), { layout: false });
@@ -1793,6 +1806,10 @@ function portalHTML(view: string, data: any = {}): string {
     const enablePriceDiffExchange = Boolean(data.settings?.enablePriceDiffExchange);
     const keepItMaxAmount = Number(data.settings?.keepItMaxAmount || 0);
     const canUseKeepIt = enableKeepIt && Number(totalAmount) <= keepItMaxAmount;
+    const storeCreditBonusRate = Number(data.settings?.storeCreditBonusRate || 0);
+    const bonusAmount = storeCreditBonusRate > 0
+      ? (Number(totalAmount) * (1 + storeCreditBonusRate)).toFixed(2)
+      : null;
     const orderedTypes = getResolutionOrderForReason(data.reason || "", data.settings);
     const cardHTML: Record<string, string> = {
       REFUND: `
@@ -1816,9 +1833,14 @@ function portalHTML(view: string, data: any = {}): string {
               <p>${_("portal.exchangePriceDiffDesc")}</p>
             </div>`,
       STORE_CREDIT: `
-            <div class="resolution-card" onclick="selectResolution('STORE_CREDIT', this)">
+            <div class="resolution-card" onclick="selectResolution('STORE_CREDIT', this)" style="position:relative;">
+              ${bonusAmount ? `<div style="position:absolute;top:12px;right:12px;background:#16A34A;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;">+${Math.round(storeCreditBonusRate * 100)}% BONUS</div>` : ""}
               <h3>🏷️ ${_("portal.storeCredit")}</h3>
-              <p>${_("portal.storeCreditDesc", { amount: totalAmount })}</p>
+              ${bonusAmount
+                ? `<p style="color:#16A34A;font-weight:600;">$${bonusAmount} store credit <span style="color:#9ca3af;font-weight:400;font-size:12px;">vs $${totalAmount} refund</span></p>
+                   <p style="font-size:12px;color:#6b7280;margin-top:4px;">${_("portal.storeCreditBonusDesc") || "Get extra value when you choose store credit!"}</p>`
+                : `<p>${_("portal.storeCreditDesc", { amount: totalAmount })}</p>`
+              }
             </div>`,
       KEEP_IT: `
             <div class="resolution-card" onclick="selectResolution('KEEP_IT', this)">
@@ -2031,6 +2053,15 @@ function portalHTML(view: string, data: any = {}): string {
               <span style="color:#6b7280;font-size:13px;">${_("portal.confirmation.amount")}</span>
               <span style="font-weight:600;">${data.totalAmount}</span>
             </div>
+            ${data.storeCreditBonus ? `
+            <div style="margin-top:10px;padding:10px 14px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:13px;color:#166534;font-weight:600;">🎁 Store Credit Bonus</span>
+                <span style="font-size:13px;color:#166534;font-weight:700;">+$${data.storeCreditBonus.extra} (+${data.storeCreditBonus.rate}%)</span>
+              </div>
+              <div style="font-size:11px;color:#16A34A;margin-top:2px;">Base: $${data.baseAmount} + Bonus: $${data.storeCreditBonus.extra} = $${data.totalAmount} total credit</div>
+            </div>
+            ` : ""}
             ${data.priceDifference ? `
             <div style="display:flex;justify-content:space-between;margin-top:8px;">
               <span style="color:#6b7280;font-size:13px;">${_("portal.confirmation.priceDifference")}</span>

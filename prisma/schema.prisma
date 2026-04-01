@@ -49,6 +49,7 @@ model StoreSettings {
   keepItMaxAmount  Decimal  @default(0)
   enablePriceDiffExchange Boolean @default(false)
   enableStoreCreditDiscountCode Boolean @default(false)
+  storeCreditBonusRate  Decimal  @default(0)
   productReturnWindowsJson String? @default("{}")
   collectionReturnWindowsJson String? @default("{}")
   nonReturnableProductIds String?
