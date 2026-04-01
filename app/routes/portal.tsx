@@ -660,6 +660,8 @@ async function handleSelectExchangeVariants(
   const resolutionType = (formData.get("resolutionType") as string) || "EXCHANGE";
 
   const itemsWithVariants: any[] = [];
+  let upsellProducts: any[] = [];
+
   if (resolutionType === "EXCHANGE") {
     for (const item of selectedItems) {
       if (!item.productId) continue;
@@ -670,6 +672,9 @@ async function handleSelectExchangeVariants(
             product(id: $id) {
               id
               title
+              priceRangeV2 { minVariantPrice { amount } }
+              collections(first: 3) { edges { node { id } } }
+              tags
               variants(first: 100) {
                 edges {
                   node {
@@ -697,7 +702,73 @@ async function handleSelectExchangeVariants(
         ...item,
         productTitle: product?.title || item.title,
         availableVariants: variants,
+        basePrice: parseFloat(product?.priceRangeV2?.minVariantPrice?.amount || item.price),
       });
+
+      // Fetch upsell candidates: same collection, higher price, in stock
+      const collectionId = product?.collections?.edges?.[0]?.node?.id;
+      if (collectionId && upsellProducts.length < 4) {
+        try {
+          const upsellResp = await admin.graphql(
+            `#graphql
+              query upsellProducts($collectionId: ID!, $minPrice: Decimal!) {
+                collection(id: $collectionId) {
+                  products(first: 6, sortKey: PRICE) {
+                    edges {
+                      node {
+                        id
+                        title
+                        handle
+                        featuredImage { url altText }
+                        priceRangeV2 {
+                          minVariantPrice { amount currencyCode }
+                          maxVariantPrice { amount currencyCode }
+                        }
+                        variants(first: 5) {
+                          edges {
+                            node {
+                              id
+                              title
+                              price
+                              availableForSale
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `,
+            { variables: { collectionId, minPrice: item.price } },
+          );
+          const upsellData = await upsellResp.json();
+          const candidates = (upsellData?.data?.collection?.products?.edges || [])
+            .map((e: any) => e.node)
+            .filter((p: any) =>
+              p.id !== item.productId &&
+              parseFloat(p.priceRangeV2?.minVariantPrice?.amount || "0") > parseFloat(item.price) &&
+              p.variants?.edges?.some((v: any) => v.node.availableForSale)
+            )
+            .slice(0, 3)
+            .map((p: any) => ({
+              id: p.id,
+              title: p.title,
+              imageUrl: p.featuredImage?.url || "",
+              imageAlt: p.featuredImage?.altText || p.title,
+              minPrice: parseFloat(p.priceRangeV2?.minVariantPrice?.amount || "0"),
+              maxPrice: parseFloat(p.priceRangeV2?.maxVariantPrice?.amount || "0"),
+              currencyCode: p.priceRangeV2?.minVariantPrice?.currencyCode || "USD",
+              variants: (p.variants?.edges || [])
+                .map((v: any) => v.node)
+                .filter((v: any) => v.availableForSale),
+            }));
+
+          upsellProducts = [...upsellProducts, ...candidates].slice(0, 4);
+        } catch {
+          // Upsell is non-blocking
+        }
+      }
     }
   } else {
     const catalogResponse = await admin.graphql(
@@ -744,6 +815,7 @@ async function handleSelectExchangeVariants(
   return liquid(portalHTML("exchange_variants", {
     orderId, orderName, email, shop, customerId,
     selectedItems: itemsWithVariants,
+    upsellProducts,
     reason, proofImageBase64, resolutionType, lang, settings
   }), { layout: false });
 }
@@ -769,6 +841,8 @@ async function handleCreateReturn(
   const reason = formData.get("reason") as string;
   const proofImageBase64 = formData.get("proofImageBase64") as string;
   const resolutionType = formData.get("resolutionType") as string;
+  const upsellVariantId = (formData.get("upsellVariantId") as string)?.trim() || null;
+  const upsellProductId = (formData.get("upsellProductId") as string)?.trim() || null;
 
   if (
     !resolutionType ||
@@ -1056,15 +1130,26 @@ async function handleCreateReturn(
     let paymentLinkUrl: string | null = null;
     if (["EXCHANGE", "EXCHANGE_DIFFERENT_PRODUCT", "EXCHANGE_WITH_PRICE_DIFF"].includes(resolutionType)) {
       const exchangeLineItems: any[] = [];
-      for (const item of selectedItems) {
-        const exchangeVariantId = formData.get(`exchangeVariant_${item.fulfillmentLineItemId}`);
-        if (exchangeVariantId) {
-          exchangeLineItems.push({
-            variantId: exchangeVariantId,
-            quantity: item.quantity,
-          });
+
+      // If customer selected an upsell product, use that instead of the variant picker
+      if (upsellVariantId && upsellProductId) {
+        exchangeLineItems.push({
+          variantId: upsellVariantId,
+          quantity: selectedItems[0]?.quantity || 1,
+          isUpsell: true,
+        });
+      } else {
+        for (const item of selectedItems) {
+          const exchangeVariantId = formData.get(`exchangeVariant_${item.fulfillmentLineItemId}`);
+          if (exchangeVariantId) {
+            exchangeLineItems.push({
+              variantId: exchangeVariantId,
+              quantity: item.quantity,
+            });
+          }
         }
       }
+
       if (exchangeLineItems.length === 0) {
         return liquid(portalHTML("error", { message: t(L, "portal.error.selectVariants"), lang, settings }), { layout: false });
       }
@@ -1124,7 +1209,8 @@ async function handleCreateReturn(
           paymentLinkUrl = invoiceResult.invoiceUrl || null;
         }
       }
-      returnInput.exchangeLineItems = exchangeLineItems;
+      // Strip custom fields (isUpsell) before passing to Shopify API
+      returnInput.exchangeLineItems = exchangeLineItems.map(({ variantId, quantity }: any) => ({ variantId, quantity }));
     }
 
     // Call Shopify returnCreate mutation
@@ -1233,6 +1319,21 @@ async function handleCreateReturn(
         },
       });
     }
+
+    // Log upsell selection for analytics
+    if (upsellVariantId && upsellProductId) {
+      await prisma.returnActionLog.create({
+        data: {
+          shop,
+          returnRequestId: returnRequest.id,
+          action: "UPSELL_ACCEPTED",
+          actor: "customer",
+          note: `Customer accepted upsell during exchange`,
+          metadata: { upsellVariantId, upsellProductId, originalItems: selectedItems.map((i: any) => i.variantId) },
+        },
+      });
+    }
+
     await dispatchReturnNotifications({
       shop,
       event: "RETURN_RECEIVED",
@@ -1949,12 +2050,41 @@ function portalHTML(view: string, data: any = {}): string {
       `;
     }).join("");
 
+    const upsells: any[] = data.upsellProducts || [];
+    const upsellHTML = upsells.length > 0 ? `
+      <div style="margin-top:24px;">
+        <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+          ✨ ${_("portal.upsell.title") || "You might also like"}
+          <span style="font-size:11px;font-weight:500;color:#6B7280;">${_("portal.upsell.subtitle") || "Upgrade your exchange"}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+          ${upsells.map((p: any) => `
+            <div class="upsell-card" data-product-id="${p.id}" onclick="selectUpsell(this)" style="border:2px solid #E5E7EB;border-radius:10px;padding:12px;cursor:pointer;transition:all 0.15s;position:relative;">
+              ${p.imageUrl ? `<img src="${p.imageUrl}" alt="${p.imageAlt}" style="width:100%;height:90px;object-fit:cover;border-radius:6px;margin-bottom:8px;" />` : `<div style="width:100%;height:90px;background:#F3F4F6;border-radius:6px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:24px;">📦</div>`}
+              <div style="font-size:12px;font-weight:600;color:#111827;margin-bottom:4px;line-height:1.3;">${p.title}</div>
+              <div style="font-size:13px;font-weight:700;color:#6366F1;">$${p.minPrice.toFixed(2)}</div>
+              <select name="upsellVariant_${p.id}" style="width:100%;margin-top:6px;padding:5px;font-size:12px;border:1px solid #D1D5DB;border-radius:6px;display:none;" class="upsell-variant-select">
+                <option value="">${_("portal.select") || "Select"}</option>
+                ${p.variants.map((v: any) => `<option value="${v.id}">${v.title} — $${parseFloat(v.price).toFixed(2)}</option>`).join("")}
+              </select>
+              <div class="upsell-selected-badge" style="display:none;position:absolute;top:8px;right:8px;background:#6366F1;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;">✓ Selected</div>
+            </div>
+          `).join("")}
+        </div>
+        <p style="font-size:11px;color:#9CA3AF;margin-top:8px;">${_("portal.upsell.note") || "Selecting an upgrade will replace your exchange item."}</p>
+      </div>
+    ` : "";
+
     return `
       <!DOCTYPE html>
       <html lang="${htmlLang}">
       <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titleByType[resolutionType] || _("portal.exchangeVariant")}</title></head>
       <body>
       ${styles}
+      <style>
+        .upsell-card:hover { border-color: #6366F1; box-shadow: 0 2px 8px rgba(99,102,241,0.15); }
+        .upsell-card.selected { border-color: #6366F1; background: #F5F3FF; }
+      </style>
       <div class="portal">
         <a href="/apps/returns" class="back-link">${_("portal.backHome")}</a>
         <div class="card">
@@ -1973,8 +2103,11 @@ function portalHTML(view: string, data: any = {}): string {
             <input type="hidden" name="reason" value="${data.reason}" />
             <input type="hidden" name="proofImageBase64" value="${data.proofImageBase64 || ''}" />
             <input type="hidden" name="resolutionType" value="${resolutionType}" />
+            <input type="hidden" name="upsellProductId" id="upsellProductId" value="" />
+            <input type="hidden" name="upsellVariantId" id="upsellVariantId" value="" />
 
             ${itemsHTML}
+            ${upsellHTML}
 
             <button type="submit" class="btn" style="margin-top:20px;" id="exchangeBtn">${_("portal.exchangeSubmit")}</button>
           </form>
@@ -1982,6 +2115,23 @@ function portalHTML(view: string, data: any = {}): string {
       </div>
       <script>
         var submitted = false;
+
+        function selectUpsell(card) {
+          document.querySelectorAll('.upsell-card').forEach(function(c) {
+            c.classList.remove('selected');
+            c.querySelector('.upsell-selected-badge').style.display = 'none';
+            c.querySelector('.upsell-variant-select').style.display = 'none';
+          });
+          card.classList.add('selected');
+          card.querySelector('.upsell-selected-badge').style.display = 'block';
+          var sel = card.querySelector('.upsell-variant-select');
+          sel.style.display = 'block';
+          document.getElementById('upsellProductId').value = card.dataset.productId;
+          sel.addEventListener('change', function() {
+            document.getElementById('upsellVariantId').value = sel.value;
+          });
+        }
+
         document.getElementById('exchangeForm').addEventListener('submit', function(e) {
           if (submitted) { e.preventDefault(); return; }
           submitted = true;
