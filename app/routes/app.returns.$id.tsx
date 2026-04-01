@@ -20,7 +20,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import type { Locale } from "../services/i18n-admin";
 import { translateReason } from "../services/i18n-admin";
-import { refreshLabelStatus } from "../services/shippo.server";
+import { refreshLabelStatus, createReturnLabel } from "../services/shippo.server";
 import { dispatchReturnNotifications } from "../services/notifications.server";
 
 async function syncRestockToShopify(admin: any, returnRequest: any) {
@@ -298,6 +298,38 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           resolutionType: returnRequest.resolution?.type || null,
         },
       });
+
+      // Auto-create Shippo return label if API key is configured
+      try {
+        const addrResponse = await admin.graphql(`#graphql
+          query getOrderAddress($id: ID!) {
+            order(id: $id) {
+              shippingAddress {
+                firstName lastName name
+                address1 city provinceCode zip countryCodeV2
+                phone
+              }
+            }
+          }
+        `, { variables: { id: returnRequest.orderId } });
+        const addrData = await addrResponse.json();
+        const sa = addrData?.data?.order?.shippingAddress;
+        if (sa) {
+          await createReturnLabel(session.shop, String(id), {
+            name: sa.name || `${sa.firstName || ""} ${sa.lastName || ""}`.trim(),
+            street1: sa.address1 || "",
+            city: sa.city || "",
+            state: sa.provinceCode || "",
+            zip: sa.zip || "",
+            country: sa.countryCodeV2 || "US",
+            phone: sa.phone || "",
+            email: returnRequest.customerEmail,
+          });
+        }
+      } catch {
+        // Label creation is non-blocking — approval still succeeds
+      }
+
       return json({ success: "approved" });
     } catch (e: any) {
       return json({ error: e.message });
@@ -616,7 +648,7 @@ export default function ReturnDetail() {
                     { label: t["detail.restock"] || "Restock returned items", value: "RESTOCK" },
                   ]}
                   value={restockDecision}
-                  onChange={setRestockDecision}
+                  onChange={(v) => setRestockDecision(v as "RESTOCK" | "NO_RESTOCK")}
                 />
                 <Button
                   onClick={() => submit({ intent: "set_restock_decision", restockDecision }, { method: "post" })}

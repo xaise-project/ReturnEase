@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { detectLocale, getTranslations, t } from "../services/i18n.server";
 import { dispatchReturnNotifications } from "../services/notifications.server";
+import { checkRateLimit, getClientIp } from "../services/rate-limit.server";
 
 const DRAFT_ORDER_CREATE_MUTATION = `#graphql
   mutation draftOrderCreate($input: DraftOrderInput!) {
@@ -271,8 +272,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (intent === "create_return") {
-    const forwarded = request.headers.get("x-forwarded-for") || "";
-    const clientIp = forwarded.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
+    const clientIp = getClientIp(request);
+    const rateCheck = checkRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+      const L = getTranslations(lang);
+      const waitMin = Math.ceil(rateCheck.resetInMs / 60000);
+      return liquid(
+        portalHTML("error", {
+          message: t(L, "portal.error.rateLimit") || `Too many requests. Please try again in ${waitMin} minute(s).`,
+          lang,
+        }),
+        { layout: false },
+      );
+    }
     return handleCreateReturn(liquid, admin, session, formData, lang, settingsForView, clientIp);
   }
 
