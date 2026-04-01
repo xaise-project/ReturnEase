@@ -115,6 +115,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .map(([reason, count]) => ({ reason, count, percent: totalReasonCount > 0 ? (count / totalReasonCount) * 100 : 0 }))
     .slice(0, 8);
 
+  // ── Product × Reason Intelligence ──────────────────────────
+  // { productTitle → { reason → count } }
+  const productReasonMap: Record<string, { title: string; reasons: Record<string, number>; total: number }> = {};
+  for (const r of allReturns) {
+    const reason = r.reason?.split(":")[0]?.trim() || "N/A";
+    for (const item of r.items) {
+      const key = item.productId || item.title;
+      if (!productReasonMap[key]) {
+        productReasonMap[key] = { title: item.title, reasons: {}, total: 0 };
+      }
+      productReasonMap[key].reasons[reason] = (productReasonMap[key].reasons[reason] || 0) + item.quantity;
+      productReasonMap[key].total += item.quantity;
+    }
+  }
+  const productReasonIntelligence = Object.values(productReasonMap)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 15)
+    .map((p) => {
+      const sortedReasons = Object.entries(p.reasons).sort(([, a], [, b]) => b - a);
+      const topReason = sortedReasons[0]?.[0] || "N/A";
+      const topReasonCount = sortedReasons[0]?.[1] || 0;
+      return {
+        title: p.title,
+        total: p.total,
+        topReason,
+        topReasonCount,
+        topReasonPercent: p.total > 0 ? Math.round((topReasonCount / p.total) * 100) : 0,
+        reasons: sortedReasons.map(([reason, count]) => ({
+          reason,
+          count,
+          percent: p.total > 0 ? Math.round((count / p.total) * 100) : 0,
+        })),
+      };
+    });
+
   // ── Solution distribution ──────────────────────────────────
   const solutionDistribution = [
     { key: "REFUND", count: refundCount, percent: totalReturns > 0 ? (refundCount / totalReturns) * 100 : 0 },
@@ -132,6 +167,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     reasonDistribution,
     solutionDistribution,
     trendData,
+    productReasonIntelligence,
   };
 };
 
@@ -267,6 +303,7 @@ export default function Analytics() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useOutletContext<{ locale: Locale; t: Record<string, string> }>();
   const [exporting, setExporting] = useState(false);
+  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
 
   const exchangeRate = data.totalReturns > 0 ? ((data.exchangeCount / data.totalReturns) * 100).toFixed(1) : "0";
   const storeCreditRate = data.totalReturns > 0 ? ((data.storeCreditCount / data.totalReturns) * 100).toFixed(1) : "0";
@@ -492,6 +529,138 @@ export default function Analytics() {
             </BlockStack>
           </Card>
         </InlineGrid>
+
+        {/* ── Product Return Reason Intelligence ── */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between">
+              <Text as="h2" variant="headingMd">
+                {t["analytics.productReasonIntelligence"] || "Return Reason Intelligence"}
+              </Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                {t["analytics.productReasonSub"] || "Most returned products with their top return reason"}
+              </Text>
+            </InlineStack>
+            <Divider />
+            {(data.productReasonIntelligence as any[]).length > 0 ? (
+              <div>
+                {/* Header row */}
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "2fr 1fr 2fr 80px",
+                  gap: 12,
+                  padding: "8px 12px",
+                  background: "#F9FAFB",
+                  borderRadius: 8,
+                  marginBottom: 4,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "#6B7280",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}>
+                  <span>{t["analytics.product"] || "Product"}</span>
+                  <span style={{ textAlign: "right" }}>{t["analytics.count"] || "Returns"}</span>
+                  <span>{t["analytics.topReason"] || "Top Reason"}</span>
+                  <span style={{ textAlign: "center" }}>%</span>
+                </div>
+
+                {(data.productReasonIntelligence as any[]).map((item, i) => {
+                  const isExpanded = expandedProduct === item.title;
+                  const reasonColors2 = ["#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#10B981"];
+                  return (
+                    <div key={item.title}>
+                      <div
+                        onClick={() => setExpandedProduct(isExpanded ? null : item.title)}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "2fr 1fr 2fr 80px",
+                          gap: 12,
+                          padding: "10px 12px",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                          background: isExpanded ? "#F5F3FF" : (i % 2 === 0 ? "#fff" : "#FAFAFA"),
+                          transition: "background 0.15s",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{
+                            fontSize: 11,
+                            color: isExpanded ? "#6366F1" : "#9CA3AF",
+                            transition: "transform 0.2s",
+                            display: "inline-block",
+                            transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                          }}>▶</span>
+                          <span style={{ fontSize: 13, color: "#111827", fontWeight: 500 }}>{item.title}</span>
+                        </div>
+                        <div style={{ textAlign: "right", fontSize: 14, fontWeight: 600, color: "#374151" }}>
+                          {item.total}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{
+                            width: 8, height: 8, borderRadius: "50%",
+                            background: reasonColors2[0],
+                            flexShrink: 0,
+                          }} />
+                          <span style={{ fontSize: 13, color: "#374151" }}>
+                            {translateReason(item.topReason, t)}
+                          </span>
+                        </div>
+                        <div style={{ textAlign: "center" }}>
+                          <span style={{
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: "#fff",
+                            background: item.topReasonPercent >= 70 ? "#EF4444" : item.topReasonPercent >= 40 ? "#F59E0B" : "#10B981",
+                            padding: "2px 8px",
+                            borderRadius: 99,
+                          }}>
+                            {item.topReasonPercent}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Expanded reason breakdown */}
+                      {isExpanded && (
+                        <div style={{
+                          margin: "0 12px 8px 12px",
+                          padding: "12px 16px",
+                          background: "#F5F3FF",
+                          borderRadius: "0 0 8px 8px",
+                          borderTop: "1px solid #E0E7FF",
+                        }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "#6366F1", marginBottom: 10 }}>
+                            {t["analytics.reasonBreakdown"] || "Reason Breakdown"} — {item.title}
+                          </div>
+                          {(item.reasons as any[]).map((r: any, ri: number) => (
+                            <div key={r.reason} style={{ marginBottom: 8 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                                <span style={{ fontSize: 12, color: "#374151" }}>{translateReason(r.reason, t)}</span>
+                                <span style={{ fontSize: 12, color: "#6B7280" }}>{r.count} · {r.percent}%</span>
+                              </div>
+                              <div style={{ height: 6, background: "#E0E7FF", borderRadius: 99, overflow: "hidden" }}>
+                                <div style={{
+                                  height: "100%",
+                                  width: `${Math.max(2, r.percent)}%`,
+                                  background: reasonColors2[ri % reasonColors2.length],
+                                  borderRadius: 99,
+                                  transition: "width 0.4s ease",
+                                }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <Text as="p" tone="subdued">{t["analytics.noData"]}</Text>
+            )}
+          </BlockStack>
+        </Card>
 
       </BlockStack>
     </Page>
