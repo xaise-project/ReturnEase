@@ -173,75 +173,126 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 // ─── SVG Line Chart ───────────────────────────────────────────
 
-function LineChart({ data, height = 160 }: { data: { date: string; total: number }[]; height?: number }) {
+function LineChart({ data }: { data: { date: string; total: number }[] }) {
   if (!data.length) return null;
-  const max = Math.max(...data.map((d) => d.total), 1);
-  const W = 100; // viewBox width %
-  const H = height;
-  const pad = { top: 12, right: 4, bottom: 24, left: 28 };
+
+  const W = 800;
+  const H = 220;
+  const pad = { top: 16, right: 24, bottom: 40, left: 48 };
   const chartW = W - pad.left - pad.right;
   const chartH = H - pad.top - pad.bottom;
+  const max = Math.max(...data.map((d) => d.total), 1);
 
-  const points = data.map((d, i) => ({
-    x: pad.left + (i / Math.max(data.length - 1, 1)) * chartW,
-    y: pad.top + chartH - (d.total / max) * chartH,
-    d,
-  }));
+  const px = (i: number) => pad.left + (i / Math.max(data.length - 1, 1)) * chartW;
+  const py = (v: number) => pad.top + chartH - (v / max) * chartH;
 
-  const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-  const areaD = `${pathD} L ${points[points.length - 1].x} ${pad.top + chartH} L ${points[0].x} ${pad.top + chartH} Z`;
+  // Smooth bezier path
+  const smooth = (pts: { x: number; y: number }[]) => {
+    if (pts.length < 2) return `M ${pts[0]?.x} ${pts[0]?.y}`;
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const cp1x = (pts[i - 1].x + pts[i].x) / 2;
+      const cp1y = pts[i - 1].y;
+      const cp2x = (pts[i - 1].x + pts[i].x) / 2;
+      const cp2y = pts[i].y;
+      d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${pts[i].x} ${pts[i].y}`;
+    }
+    return d;
+  };
 
-  // Y axis labels
-  const yTicks = [0, Math.round(max / 2), max];
-  // X axis: show only ~5 labels
-  const xStep = Math.max(1, Math.floor(data.length / 5));
-  const xLabels = data.filter((_, i) => i % xStep === 0 || i === data.length - 1);
+  const points = data.map((d, i) => ({ x: px(i), y: py(d.total), d }));
+  const linePath = smooth(points);
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${py(0)} L ${points[0].x} ${py(0)} Z`;
+
+  // Y ticks: 4 steps
+  const yTicks = Array.from({ length: 5 }, (_, i) => Math.round((max / 4) * i));
+  // X labels: ~6 evenly spaced
+  const xStep = Math.max(1, Math.floor(data.length / 6));
+  const xLabelIdxs = new Set(
+    data.map((_, i) => i).filter((i) => i % xStep === 0 || i === data.length - 1)
+  );
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
-      style={{ width: "100%", height: H, display: "block" }}
-      preserveAspectRatio="none"
+      style={{ width: "100%", height: "auto", display: "block" }}
+      preserveAspectRatio="xMidYMid meet"
     >
-      {/* Grid lines */}
+      <defs>
+        <linearGradient id="areaGrad2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#6366F1" stopOpacity="0.18" />
+          <stop offset="100%" stopColor="#6366F1" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="chartClip">
+          <rect x={pad.left} y={pad.top} width={chartW} height={chartH} />
+        </clipPath>
+      </defs>
+
+      {/* Y grid lines + labels */}
       {yTicks.map((v) => {
-        const y = pad.top + chartH - (v / max) * chartH;
+        const y = py(v);
         return (
           <g key={v}>
-            <line x1={pad.left} y1={y} x2={pad.left + chartW} y2={y} stroke="#E5E7EB" strokeWidth="0.5" />
-            <text x={pad.left - 2} y={y + 3} fontSize="5" fill="#9CA3AF" textAnchor="end">{v}</text>
+            <line
+              x1={pad.left} y1={y} x2={pad.left + chartW} y2={y}
+              stroke="#F3F4F6" strokeWidth="1"
+            />
+            <text
+              x={pad.left - 8} y={y + 4}
+              fontSize="11" fill="#9CA3AF" textAnchor="end"
+            >
+              {v}
+            </text>
           </g>
         );
       })}
 
-      {/* Area fill */}
-      <defs>
-        <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#6366F1" stopOpacity="0.25" />
-          <stop offset="100%" stopColor="#6366F1" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      <path d={areaD} fill="url(#areaGrad)" />
+      {/* X axis line */}
+      <line
+        x1={pad.left} y1={py(0)} x2={pad.left + chartW} y2={py(0)}
+        stroke="#E5E7EB" strokeWidth="1"
+      />
+
+      {/* Area */}
+      <path d={areaPath} fill="url(#areaGrad2)" clipPath="url(#chartClip)" />
 
       {/* Line */}
-      <path d={pathD} fill="none" stroke="#6366F1" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d={linePath}
+        fill="none"
+        stroke="#6366F1"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        clipPath="url(#chartClip)"
+      />
 
-      {/* Dots on data points */}
-      {points.map((p, i) => (
+      {/* Dots only on non-zero points — smaller for dense data */}
+      {points.map((p, i) =>
         p.d.total > 0 ? (
-          <circle key={i} cx={p.x} cy={p.y} r="1.5" fill="#6366F1" />
+          <circle
+            key={i}
+            cx={p.x} cy={p.y}
+            r={data.length > 30 ? 2 : 3.5}
+            fill="#fff"
+            stroke="#6366F1"
+            strokeWidth="2"
+          />
         ) : null
-      ))}
+      )}
 
       {/* X axis labels */}
-      {xLabels.map((d) => {
-        const idx = data.indexOf(d);
-        const x = pad.left + (idx / Math.max(data.length - 1, 1)) * chartW;
-        const label = d.date.slice(5); // MM-DD
-        return (
-          <text key={d.date} x={x} y={H - 4} fontSize="4.5" fill="#9CA3AF" textAnchor="middle">{label}</text>
-        );
-      })}
+      {points.map((p, i) =>
+        xLabelIdxs.has(i) ? (
+          <text
+            key={p.d.date}
+            x={p.x} y={H - 8}
+            fontSize="11" fill="#9CA3AF" textAnchor="middle"
+          >
+            {p.d.date.slice(5)}
+          </text>
+        ) : null
+      )}
     </svg>
   );
 }
@@ -433,7 +484,7 @@ export default function Analytics() {
             <Divider />
             {trendData.length > 1 ? (
               <div style={{ paddingTop: 8 }}>
-                <LineChart data={trendData} height={180} />
+                <LineChart data={trendData} />
                 <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 8 }}>
                   <span style={{ fontSize: 12, color: "#6B7280" }}>
                     <span style={{ display: "inline-block", width: 12, height: 3, background: "#6366F1", borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} />
