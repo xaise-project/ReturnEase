@@ -187,6 +187,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const wardrobingMaxReturns = parseInt((formData.get("wardrobingMaxReturns") as string) || "3", 10) || 3;
   const ipRepeatWindowHours = parseInt((formData.get("ipRepeatWindowHours") as string) || "24", 10) || 24;
   const ipRepeatMaxReturns = parseInt((formData.get("ipRepeatMaxReturns") as string) || "2", 10) || 2;
+  const resolutionRulesJson = (formData.get("resolutionRulesJson") as string) || "[]";
 
   await prisma.storeSettings.upsert({
     where: { shop: session.shop },
@@ -249,6 +250,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       wardrobingMaxReturns,
       ipRepeatWindowHours,
       ipRepeatMaxReturns,
+      resolutionRulesJson,
     },
     create: {
       shop: session.shop,
@@ -310,6 +312,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       wardrobingMaxReturns,
       ipRepeatWindowHours,
       ipRepeatMaxReturns,
+      resolutionRulesJson,
     },
   });
 
@@ -432,6 +435,9 @@ export default function Settings() {
   const [ipRepeatMaxReturns, setIpRepeatMaxReturns] = useState(
     settings?.ipRepeatMaxReturns ? String(settings.ipRepeatMaxReturns) : "2",
   );
+  const [resolutionRules, setResolutionRules] = useState<Array<{ id: string; condition: string; value: string; resolution: string }>>(() => {
+    try { return JSON.parse(settings?.resolutionRulesJson || "[]"); } catch { return []; }
+  });
   const [saved, setSaved] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
 
@@ -528,6 +534,7 @@ export default function Settings() {
     formData.set("wardrobingMaxReturns", wardrobingMaxReturns);
     formData.set("ipRepeatWindowHours", ipRepeatWindowHours);
     formData.set("ipRepeatMaxReturns", ipRepeatMaxReturns);
+    formData.set("resolutionRulesJson", JSON.stringify(resolutionRules));
     submit(formData, { method: "post" });
     setTimeout(() => {
       setSaved(true);
@@ -941,6 +948,93 @@ export default function Settings() {
                     />
                   </BlockStack>
                 </Card>
+
+                {/* ── Automated Resolution Rules ── */}
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between">
+                      <Text as="h2" variant="headingMd">{t["settings.resolutionRules"] || "Automated Resolution Rules"}</Text>
+                      <Button
+                        size="slim"
+                        onClick={() => setResolutionRules((prev) => [
+                          ...prev,
+                          { id: `r${Date.now()}`, condition: "ORDER_AMOUNT_GTE", value: "", resolution: "STORE_CREDIT" },
+                        ])}
+                      >
+                        {t["settings.addRule"] || "+ Add Rule"}
+                      </Button>
+                    </InlineStack>
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      {t["settings.resolutionRulesHelp"] || "Rules are evaluated top-to-bottom. First match overrides the customer's resolution choice."}
+                    </Text>
+                    <Divider />
+                    {resolutionRules.length === 0 ? (
+                      <Text as="p" tone="subdued">{t["settings.noRules"] || "No rules defined. Add a rule to automate resolution decisions."}</Text>
+                    ) : (
+                      <BlockStack gap="300">
+                        {resolutionRules.map((rule, idx) => (
+                          <div key={rule.id} style={{
+                            display: "grid",
+                            gridTemplateColumns: "auto 1fr 1fr 1fr auto",
+                            gap: 10,
+                            alignItems: "center",
+                            padding: "10px 12px",
+                            background: "#F9FAFB",
+                            borderRadius: 8,
+                            border: "1px solid #E5E7EB",
+                          }}>
+                            <span style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 600 }}>#{idx + 1}</span>
+                            <Select
+                              label=""
+                              labelHidden
+                              options={[
+                                { label: t["settings.rule.ORDER_AMOUNT_GTE"] || "Order amount ≥", value: "ORDER_AMOUNT_GTE" },
+                                { label: t["settings.rule.ORDER_AMOUNT_LTE"] || "Order amount ≤", value: "ORDER_AMOUNT_LTE" },
+                                { label: t["settings.rule.CUSTOMER_TAG"] || "Customer has tag", value: "CUSTOMER_TAG" },
+                                { label: t["settings.rule.REASON"] || "Reason contains", value: "REASON" },
+                                { label: t["settings.rule.RETURN_COUNT_GTE"] || "Return count ≥", value: "RETURN_COUNT_GTE" },
+                              ]}
+                              value={rule.condition}
+                              onChange={(v) => setResolutionRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, condition: v } : r))}
+                            />
+                            <TextField
+                              label=""
+                              labelHidden
+                              placeholder={
+                                rule.condition === "CUSTOMER_TAG" ? "VIP" :
+                                rule.condition === "REASON" ? "DAMAGED" :
+                                "100"
+                              }
+                              value={rule.value}
+                              onChange={(v) => setResolutionRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, value: v } : r))}
+                              autoComplete="off"
+                            />
+                            <Select
+                              label=""
+                              labelHidden
+                              options={[
+                                { label: t["settings.rule.res.STORE_CREDIT"] || "→ Store Credit", value: "STORE_CREDIT" },
+                                { label: t["settings.rule.res.EXCHANGE"] || "→ Exchange", value: "EXCHANGE" },
+                                { label: t["settings.rule.res.REFUND"] || "→ Refund", value: "REFUND" },
+                                { label: t["settings.rule.res.KEEP_IT"] || "→ Keep It", value: "KEEP_IT" },
+                              ]}
+                              value={rule.resolution}
+                              onChange={(v) => setResolutionRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, resolution: v } : r))}
+                            />
+                            <Button
+                              tone="critical"
+                              size="slim"
+                              onClick={() => setResolutionRules((prev) => prev.filter((r) => r.id !== rule.id))}
+                            >
+                              ✕
+                            </Button>
+                          </div>
+                        ))}
+                      </BlockStack>
+                    )}
+                  </BlockStack>
+                </Card>
+
               </BlockStack>
             )}
 

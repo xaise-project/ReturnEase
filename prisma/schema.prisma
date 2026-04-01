@@ -87,6 +87,7 @@ model StoreSettings {
   gorgiasWebhookUrl  String?
   enableZendesk      Boolean @default(false)
   zendeskWebhookUrl  String?
+  resolutionRulesJson String? @default("[]")
   blockMultipleReturnsSameOrder Boolean @default(true)
   requirePhotoForFraudReasons Boolean @default(true)
   highReturnRateThreshold Decimal @default(0.5)

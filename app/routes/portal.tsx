@@ -4,6 +4,7 @@ import prisma from "../db.server";
 import { detectLocale, getTranslations, t } from "../services/i18n.server";
 import { dispatchReturnNotifications } from "../services/notifications.server";
 import { checkRateLimit, getClientIp } from "../services/rate-limit.server";
+import { parseResolutionRules, evaluateRules } from "../services/resolution-rules.server";
 
 const DRAFT_ORDER_CREATE_MUTATION = `#graphql
   mutation draftOrderCreate($input: DraftOrderInput!) {
@@ -1014,7 +1015,44 @@ async function handleCreateReturn(
       } catch {}
     }
 
-    if (resolutionType === "KEEP_IT") {
+    // ── Automated Resolution Rules ──────────────────────────
+    // Evaluate merchant-defined rules; override customer's resolution choice if matched.
+    const resolutionRules = parseResolutionRules(settings?.resolutionRulesJson);
+    let appliedResolutionType = resolutionType;
+    if (resolutionRules.length > 0) {
+      // Fetch customer tags from Shopify if we have a customerId
+      let customerTags: string[] = [];
+      if (customerId) {
+        try {
+          const tagResp = await admin.graphql(
+            `#graphql
+              query getCustomerTags($id: ID!) {
+                customer(id: $id) { tags }
+              }
+            `,
+            { variables: { id: customerId } },
+          );
+          const tagData = await tagResp.json();
+          customerTags = tagData.data?.customer?.tags || [];
+        } catch {}
+      }
+
+      const ruleMatch = evaluateRules(resolutionRules, {
+        orderAmount: totalAmount,
+        customerTags,
+        reason,
+        customerReturnCount: customerReturnTotal,
+      });
+
+      if (ruleMatch && ruleMatch !== resolutionType) {
+        // Log the rule override for audit trail
+        appliedResolutionType = ruleMatch;
+        // We'll log this after the returnRequest is created — store it for later
+      }
+    }
+    const finalResolutionType = appliedResolutionType;
+
+    if (finalResolutionType === "KEEP_IT") {
       if (!settings?.enableKeepIt) {
         return liquid(portalHTML("error", { message: t(L, "portal.error.keepItDisabled"), lang, settings }), { layout: false });
       }
@@ -1091,7 +1129,7 @@ async function handleCreateReturn(
         returnId: keepItRequest.id,
         items: selectedItems,
         reason,
-        resolutionType,
+        resolutionType: finalResolutionType,
         totalAmount: totalAmount.toFixed(2),
         fraudWarning,
         isAutoApproved: true,
@@ -1128,7 +1166,7 @@ async function handleCreateReturn(
 
     let priceDifference = 0;
     let paymentLinkUrl: string | null = null;
-    if (["EXCHANGE", "EXCHANGE_DIFFERENT_PRODUCT", "EXCHANGE_WITH_PRICE_DIFF"].includes(resolutionType)) {
+    if (["EXCHANGE", "EXCHANGE_DIFFERENT_PRODUCT", "EXCHANGE_WITH_PRICE_DIFF"].includes(finalResolutionType)) {
       const exchangeLineItems: any[] = [];
 
       // If customer selected an upsell product, use that instead of the variant picker
@@ -1154,7 +1192,7 @@ async function handleCreateReturn(
         return liquid(portalHTML("error", { message: t(L, "portal.error.selectVariants"), lang, settings }), { layout: false });
       }
 
-      if (resolutionType === "EXCHANGE_WITH_PRICE_DIFF") {
+      if (finalResolutionType === "EXCHANGE_WITH_PRICE_DIFF") {
         const variantIds = exchangeLineItems.map((item) => item.variantId);
         const variantResponse = await admin.graphql(
           `#graphql
@@ -1249,7 +1287,7 @@ async function handleCreateReturn(
     }
 
     let generatedDiscountCode: string | null = null;
-    if (resolutionType === "STORE_CREDIT" && settings?.enableStoreCreditDiscountCode) {
+    if (finalResolutionType === "STORE_CREDIT" && settings?.enableStoreCreditDiscountCode) {
       const candidateCode = createDiscountCode(orderName);
       const discountResult = await createStoreCreditDiscountCode(admin, {
         code: candidateCode,
@@ -1291,15 +1329,15 @@ async function handleCreateReturn(
         },
         resolution: {
           create: {
-            type: resolutionType as any,
+            type: finalResolutionType as any,
             amount: effectiveAmount,
-            priceDifference: resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? priceDifference : null,
+            priceDifference: finalResolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? priceDifference : null,
             paymentLinkUrl,
             discountCode: generatedDiscountCode,
             currency: "USD",
-            metadata: resolutionType === "EXCHANGE_WITH_PRICE_DIFF"
+            metadata: finalResolutionType === "EXCHANGE_WITH_PRICE_DIFF"
               ? { priceDifference, paymentLinkUrl }
-              : resolutionType === "STORE_CREDIT" && storeCreditBonusRate > 0
+              : finalResolutionType === "STORE_CREDIT" && storeCreditBonusRate > 0
                 ? { bonusRate: storeCreditBonusRate, baseAmount: totalAmount, bonusAmount: effectiveAmount - totalAmount }
                 : undefined,
           },
@@ -1316,6 +1354,20 @@ async function handleCreateReturn(
           clientIp: clientIp || null,
           rule: "HIGH_RETURN_RATE",
           outcome: "WARNING",
+        },
+      });
+    }
+
+    // Log rule override if resolution was changed by automation
+    if (finalResolutionType !== resolutionType) {
+      await prisma.returnActionLog.create({
+        data: {
+          shop,
+          returnRequestId: returnRequest.id,
+          action: "RULE_OVERRIDE",
+          actor: "system:rules",
+          note: `Resolution auto-changed: ${resolutionType} → ${finalResolutionType}`,
+          metadata: { original: resolutionType, applied: finalResolutionType },
         },
       });
     }
@@ -1343,14 +1395,14 @@ async function handleCreateReturn(
         customerEmail: email,
         reason,
         status: "REQUESTED",
-        resolutionType,
+        resolutionType: finalResolutionType,
         amount: totalAmount,
       },
     });
 
     // Issue Shopify native store credit if resolution is STORE_CREDIT
     // Only runs when enableStoreCreditDiscountCode is OFF (native credit takes priority)
-    if (resolutionType === "STORE_CREDIT" && customerId && !settings?.enableStoreCreditDiscountCode) {
+    if (finalResolutionType === "STORE_CREDIT" && customerId && !settings?.enableStoreCreditDiscountCode) {
       try {
         // Step 1: Fetch the StoreCreditAccount GID for this customer
         const scAccountResp = await admin.graphql(
@@ -1432,17 +1484,17 @@ async function handleCreateReturn(
     }
 
     if (
-      resolutionType === "EXCHANGE" ||
-      resolutionType === "EXCHANGE_DIFFERENT_PRODUCT" ||
-      resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ||
-      resolutionType === "STORE_CREDIT"
+      finalResolutionType === "EXCHANGE" ||
+      finalResolutionType === "EXCHANGE_DIFFERENT_PRODUCT" ||
+      finalResolutionType === "EXCHANGE_WITH_PRICE_DIFF" ||
+      finalResolutionType === "STORE_CREDIT"
     ) {
       const commissionAmount = totalAmount * 0.02;
       const usageRecord = await prisma.usageRecord.create({
         data: {
           shop,
           returnRequestId: returnRequest.id,
-          type: resolutionType as any,
+          type: finalResolutionType as any,
           savedAmount: totalAmount,
           commissionRate: 0.02,
           commissionAmount,
@@ -1466,7 +1518,7 @@ async function handleCreateReturn(
               variables: {
                 subscriptionLineItemId: settings.shopifySubscriptionId,
                 price: { amount: commissionAmount.toFixed(2), currencyCode: "USD" },
-                description: `ReturnEase commission: ${resolutionType} - $${effectiveAmount.toFixed(2)} USD @ 2%`,
+                description: `ReturnEase commission: ${finalResolutionType} - $${effectiveAmount.toFixed(2)} USD @ 2%`,
               },
             },
           );
@@ -1514,13 +1566,13 @@ async function handleCreateReturn(
       returnId: returnRequest.id,
       items: selectedItems,
       reason,
-      resolutionType,
-      priceDifference: resolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? priceDifference.toFixed(2) : null,
+      resolutionType: finalResolutionType,
+      priceDifference: finalResolutionType === "EXCHANGE_WITH_PRICE_DIFF" ? priceDifference.toFixed(2) : null,
       paymentLinkUrl,
       discountCode: generatedDiscountCode,
       totalAmount: effectiveAmount.toFixed(2),
       baseAmount: totalAmount.toFixed(2),
-      storeCreditBonus: resolutionType === "STORE_CREDIT" && storeCreditBonusRate > 0
+      storeCreditBonus: finalResolutionType === "STORE_CREDIT" && storeCreditBonusRate > 0
         ? { rate: Math.round(storeCreditBonusRate * 100), extra: (effectiveAmount - totalAmount).toFixed(2) }
         : null,
       fraudWarning,
