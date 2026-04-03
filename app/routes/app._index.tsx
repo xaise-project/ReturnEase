@@ -16,6 +16,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import type { Locale } from "../services/i18n-admin";
+import { StatCard } from "../components/StatCard";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -68,49 +69,34 @@ export default function Index() {
       <BlockStack gap="500">
         <Layout>
           <Layout.Section>
-            <InlineGrid columns={4} gap="400">
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.totalReturns"]}</Text>
-                  <Text as="p" variant="headingXl">{totalReturns}</Text>
-                </BlockStack>
-              </Card>
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.pending"]}</Text>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/app/returns?status=REQUESTED")}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      padding: 0,
-                      margin: 0,
-                      width: "100%",
-                      textAlign: "left",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <InlineGrid columns="1fr auto" alignItems="center">
-                      <Text as="p" variant="headingXl">{pendingReturns}</Text>
-                      {pendingReturns > 0 && <Badge tone="attention">{t["dashboard.new"]}</Badge>}
-                    </InlineGrid>
-                  </button>
-                </BlockStack>
-              </Card>
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.approved"]}</Text>
-                  <Text as="p" variant="headingXl">{approvedReturns}</Text>
-                </BlockStack>
-              </Card>
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodySm" tone="subdued">{t["dashboard.completed"]}</Text>
-                  <Text as="p" variant="headingXl">{completedReturns}</Text>
-                </BlockStack>
-              </Card>
-            </InlineGrid>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+              <StatCard
+                label={t["dashboard.totalReturns"]}
+                value={totalReturns}
+                icon="📦"
+                color="#6366F1"
+              />
+              <StatCard
+                label={t["dashboard.pending"]}
+                value={pendingReturns}
+                icon="⏳"
+                color="#F59E0B"
+                onClick={() => navigate("/app/returns?status=REQUESTED")}
+                badge={pendingReturns > 0 ? <Badge tone="attention">{t["dashboard.new"]}</Badge> : undefined}
+              />
+              <StatCard
+                label={t["dashboard.approved"]}
+                value={approvedReturns}
+                icon="✅"
+                color="#3B82F6"
+              />
+              <StatCard
+                label={t["dashboard.completed"]}
+                value={completedReturns}
+                icon="🎉"
+                color="#10B981"
+              />
+            </div>
           </Layout.Section>
 
           <Layout.Section>

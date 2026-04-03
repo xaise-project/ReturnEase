@@ -22,6 +22,7 @@ import {
   useIndexResourceState,
   Autocomplete,
   Modal,
+  Collapsible,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -1030,6 +1031,7 @@ export default function Returns() {
   const navigation = useNavigation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { locale, t } = useOutletContext<{ locale: Locale; t: Record<string, string> }>();
+  const [manualSectionOpen, setManualSectionOpen] = useState(false);
   const [manualOrderName, setManualOrderName] = useState("");
   const [manualOrderId, setManualOrderId] = useState("");
   const [manualOrderQuery, setManualOrderQuery] = useState("");
@@ -1526,211 +1528,236 @@ export default function Returns() {
           </Modal.Section>
         </Modal>
 
+        {/* ── Manuel İade Oluştur (Collapsible) ── */}
         <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">{t["returns.adminCreate"] || "Yönetici Tarafından İade Oluştur"}</Text>
-            <InlineStack gap="200" align="start">
-              <Autocomplete
-                options={orderOptions}
-                selected={manualOrderId ? [manualOrderId] : []}
-                onSelect={(selected) => {
-                  const id = selected[0] || "";
-                  setManualOrderId(id);
-                  setManualOrderItemId("");
-                  setManualOrderItemQuery("");
-                  setManualProductId("manual");
-                  setManualVariantId("manual");
-                  setManualItemTitle("");
-                  setManualQuantity("1");
-                  setManualPrice("0");
-                  const order = manualOrders.find((o) => o.value === id);
-                  if (order) {
-                    setManualOrderName(order.label);
-                    setManualOrderQuery(order.label);
-                    if (!manualCustomerEmail && order.email) {
-                      setManualCustomerEmail(order.email);
-                      setManualCustomerQuery(order.email);
+          <div
+            onClick={() => setManualSectionOpen(!manualSectionOpen)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              cursor: "pointer", userSelect: "none", padding: "2px 0",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{
+                fontSize: 12, color: "#9CA3AF", transition: "transform 0.2s",
+                display: "inline-block", transform: manualSectionOpen ? "rotate(90deg)" : "rotate(0deg)",
+              }}>▶</span>
+              <Text as="h2" variant="headingMd">{t["returns.adminCreate"] || "Yönetici Tarafından İade Oluştur"}</Text>
+            </div>
+            <Badge tone="info">{manualSectionOpen ? (t["returns.collapse"] || "Kapat") : (t["returns.expand"] || "Aç")}</Badge>
+          </div>
+          <Collapsible open={manualSectionOpen} id="manual-return-section">
+            <div style={{ paddingTop: 16 }}>
+              <BlockStack gap="300">
+                {/* Row 1: Sipariş + Ürün */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <Autocomplete
+                    options={orderOptions}
+                    selected={manualOrderId ? [manualOrderId] : []}
+                    onSelect={(selected) => {
+                      const id = selected[0] || "";
+                      setManualOrderId(id);
+                      setManualOrderItemId("");
+                      setManualOrderItemQuery("");
+                      setManualProductId("manual");
+                      setManualVariantId("manual");
+                      setManualItemTitle("");
+                      setManualQuantity("1");
+                      setManualPrice("0");
+                      const order = manualOrders.find((o) => o.value === id);
+                      if (order) {
+                        setManualOrderName(order.label);
+                        setManualOrderQuery(order.label);
+                        if (!manualCustomerEmail && order.email) {
+                          setManualCustomerEmail(order.email);
+                          setManualCustomerQuery(order.email);
+                        }
+                      }
+                    }}
+                    textField={
+                      <Autocomplete.TextField
+                        label={t["returns.order"]}
+                        value={manualOrderQuery}
+                        onChange={(value) => {
+                          setManualOrderQuery(value);
+                          setManualOrderName(value);
+                          if (!value) {
+                            setManualOrderId("");
+                            setManualOrderItemId("");
+                            setManualOrderItemQuery("");
+                          }
+                        }}
+                        autoComplete="off"
+                        placeholder={t["returns.orderSearchHint"] || "Sipariş no yazın (#1001 gibi)"}
+                      />
                     }
-                  }
-                }}
-                textField={
-                  <Autocomplete.TextField
-                    label={t["returns.order"]}
-                    value={manualOrderQuery}
-                    onChange={(value) => {
-                      setManualOrderQuery(value);
-                      setManualOrderName(value);
-                      if (!value) {
-                        setManualOrderId("");
-                        setManualOrderItemId("");
-                        setManualOrderItemQuery("");
+                  />
+                  <Autocomplete
+                    options={orderItemOptions}
+                    selected={manualOrderItemId ? [manualOrderItemId] : []}
+                    onSelect={(selected) => {
+                      const value = selected[0] || "";
+                      setManualOrderItemId(value);
+                      const item = selectedOrder?.items.find((it) => it.value === value);
+                      if (item) {
+                        setManualOrderItemQuery(item.label);
+                        setManualItemTitle(item.label);
+                        setManualProductId(item.productId);
+                        setManualVariantId(item.variantId);
+                        setManualQuantity(String(item.quantity));
+                        setManualPrice(item.price);
                       }
                     }}
-                    autoComplete="off"
-                    placeholder={t["returns.orderSearchHint"] || "Sipariş no yazın (#1001 gibi)"}
+                    textField={
+                      <Autocomplete.TextField
+                        label={t["returns.orderItem"] || "Sipariş Ürünü"}
+                        value={manualOrderItemQuery}
+                        onChange={(value) => {
+                          setManualOrderItemQuery(value);
+                          if (!value) {
+                            setManualOrderItemId("");
+                            setManualItemTitle("");
+                            setManualProductId("manual");
+                            setManualVariantId("manual");
+                            setManualQuantity("1");
+                            setManualPrice("0");
+                          }
+                        }}
+                        autoComplete="off"
+                        disabled={!manualOrderId}
+                        placeholder={t["returns.orderItemSearchHint"] || "Sipariş ürünü seçin"}
+                      />
+                    }
                   />
-                }
-              />
-              <Autocomplete
-                options={orderItemOptions}
-                selected={manualOrderItemId ? [manualOrderItemId] : []}
-                onSelect={(selected) => {
-                  const value = selected[0] || "";
-                  setManualOrderItemId(value);
-                  const item = selectedOrder?.items.find((it) => it.value === value);
-                  if (item) {
-                    setManualOrderItemQuery(item.label);
-                    setManualItemTitle(item.label);
-                    setManualProductId(item.productId);
-                    setManualVariantId(item.variantId);
-                    setManualQuantity(String(item.quantity));
-                    setManualPrice(item.price);
-                  }
-                }}
-                textField={
-                  <Autocomplete.TextField
-                    label={t["returns.orderItem"] || "Sipariş Ürünü"}
-                    value={manualOrderItemQuery}
-                    onChange={(value) => {
-                      setManualOrderItemQuery(value);
-                      if (!value) {
-                        setManualOrderItemId("");
-                        setManualItemTitle("");
-                        setManualProductId("manual");
-                        setManualVariantId("manual");
-                        setManualQuantity("1");
-                        setManualPrice("0");
-                      }
-                    }}
-                    autoComplete="off"
-                    disabled={!manualOrderId}
-                    placeholder={t["returns.orderItemSearchHint"] || "Sipariş ürünü seçin"}
-                  />
-                }
-              />
-              <Autocomplete
-                options={customerOptions}
-                selected={manualCustomerEmail ? [manualCustomerEmail] : []}
-                onSelect={(selected) => {
-                  const value = selected[0] || "";
-                  setManualCustomerEmail(value);
-                  setManualCustomerQuery(value);
-                }}
-                textField={
-                  <Autocomplete.TextField
-                    label={t["returns.customer"]}
-                    value={manualCustomerQuery}
-                    onChange={(value) => {
-                      setManualCustomerQuery(value);
+                </div>
+                {/* Row 2: Müşteri + Çözüm */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <Autocomplete
+                    options={customerOptions}
+                    selected={manualCustomerEmail ? [manualCustomerEmail] : []}
+                    onSelect={(selected) => {
+                      const value = selected[0] || "";
                       setManualCustomerEmail(value);
+                      setManualCustomerQuery(value);
                     }}
-                    autoComplete="off"
-                    placeholder={t["returns.customerSearchHint"] || "Müşteri adı veya email yazın"}
+                    textField={
+                      <Autocomplete.TextField
+                        label={t["returns.customer"]}
+                        value={manualCustomerQuery}
+                        onChange={(value) => {
+                          setManualCustomerQuery(value);
+                          setManualCustomerEmail(value);
+                        }}
+                        autoComplete="off"
+                        placeholder={t["returns.customerSearchHint"] || "Müşteri adı veya email yazın"}
+                      />
+                    }
                   />
-                }
-              />
-            </InlineStack>
-            <ChoiceList
-              title={t["returns.adminCreateReasons"] || "Admin Return Reasons"}
-              choices={adminReasonChoices}
-              selected={manualAdminReason ? [manualAdminReason] : []}
-              onChange={(selected) => {
-                const reason = selected[0] || "";
-                setManualAdminReason(reason);
-                
-                // Seçilen nedene göre Türkçe e-posta şablonunu otomatik doldur
-                if (reason === "OUT_OF_STOCK" || reason === "DAMAGED_INVENTORY" || reason === "GHOST_INVENTORY") {
-                  setManualEmailSubject("Siparişiniz Hakkında - Ürün Temin Edilemiyor");
-                  setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" stoklarımızda kalmadığı/hasarlı olduğu için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
-                } else if (reason === "QUALITY_ISSUE") {
-                  setManualEmailSubject("Siparişiniz Hakkında - Kalite Kontrol");
-                  setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" kalite kontrol standartlarımızı geçemediği için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
-                } else if (reason === "ORDER_ERROR") {
-                  setManualEmailSubject("Siparişiniz Hakkında - Sistem Hatası");
-                  setManualEmailBody(`Merhaba,\n\nSiparişinizin işlenmesi sırasında sistemsel bir hata oluştuğu için "${manualItemTitle || 'ilgili ürün'}" için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
-                } else {
-                  setManualEmailSubject("İade İşleminiz Hakkında");
-                  setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" için iade işleminiz başarıyla oluşturulmuş ve ücret iadeniz gerçekleştirilmiştir.`);
-                }
-              }}
-            />
-            <Card padding="200">
-              <BlockStack gap="200">
-                <Text as="h3" variant="headingSm">{t["returns.notifyCustomer"] || "Notify Customer"}</Text>
-                <InlineStack gap="200" align="start">
+                  <Select
+                    label={t["returns.resolution"]}
+                    options={[
+                      { label: t["resolution.REFUND"], value: "REFUND" },
+                      { label: t["resolution.EXCHANGE"], value: "EXCHANGE" },
+                      { label: t["resolution.EXCHANGE_DIFFERENT_PRODUCT"], value: "EXCHANGE_DIFFERENT_PRODUCT" },
+                      { label: t["resolution.EXCHANGE_WITH_PRICE_DIFF"], value: "EXCHANGE_WITH_PRICE_DIFF" },
+                      { label: t["resolution.STORE_CREDIT"], value: "STORE_CREDIT" },
+                      { label: t["resolution.KEEP_IT"], value: "KEEP_IT" },
+                    ]}
+                    value={manualResolutionType}
+                    onChange={setManualResolutionType}
+                  />
+                </div>
+                {/* Row 3: Admin Reason + Ürün detayları yan yana */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <ChoiceList
-                    title={t["returns.notifyCustomer"] || "Notify Customer"}
+                    title={t["returns.adminCreateReasons"] || "Admin Return Reasons"}
+                    choices={adminReasonChoices}
+                    selected={manualAdminReason ? [manualAdminReason] : []}
+                    onChange={(selected) => {
+                      const reason = selected[0] || "";
+                      setManualAdminReason(reason);
+                      if (reason === "OUT_OF_STOCK" || reason === "DAMAGED_INVENTORY" || reason === "GHOST_INVENTORY") {
+                        setManualEmailSubject("Siparişiniz Hakkında - Ürün Temin Edilemiyor");
+                        setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" stoklarımızda kalmadığı/hasarlı olduğu için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
+                      } else if (reason === "QUALITY_ISSUE") {
+                        setManualEmailSubject("Siparişiniz Hakkında - Kalite Kontrol");
+                        setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" kalite kontrol standartlarımızı geçemediği için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
+                      } else if (reason === "ORDER_ERROR") {
+                        setManualEmailSubject("Siparişiniz Hakkında - Sistem Hatası");
+                        setManualEmailBody(`Merhaba,\n\nSiparişinizin işlenmesi sırasında sistemsel bir hata oluştuğu için "${manualItemTitle || 'ilgili ürün'}" için iptal/iade işlemi başlatılmış ve ücret iadeniz gerçekleştirilmiştir.\n\nAnlayışınız için teşekkür ederiz.`);
+                      } else {
+                        setManualEmailSubject("İade İşleminiz Hakkında");
+                        setManualEmailBody(`Merhaba,\n\nSiparişinizdeki "${manualItemTitle || 'ilgili ürün'}" için iade işleminiz başarıyla oluşturulmuş ve ücret iadeniz gerçekleştirilmiştir.`);
+                      }
+                    }}
+                  />
+                  <BlockStack gap="200">
+                    <TextField label={t["returns.itemTitle"] || "Ürün"} value={manualItemTitle} onChange={setManualItemTitle} autoComplete="off" />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <TextField label={t["detail.qty"]} type="number" value={manualQuantity} onChange={setManualQuantity} autoComplete="off" />
+                      <TextField label={t["detail.amount"]} type="number" value={manualPrice} onChange={setManualPrice} autoComplete="off" />
+                    </div>
+                  </BlockStack>
+                </div>
+                {/* Bildirim — collapsible */}
+                <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 10 }}>
+                  <ChoiceList
+                    title=""
                     titleHidden
-                    choices={[{ label: t["returns.notifyCustomerHelp"] || "İade oluşturulduğunda müşteriye e-posta gönder", value: "notify" }]}
+                    choices={[{ label: t["returns.notifyCustomerHelp"] || "Müşteriye e-posta gönder", value: "notify" }]}
                     selected={manualNotifyCustomer ? ["notify"] : []}
                     onChange={(selected) => setManualNotifyCustomer(selected.includes("notify"))}
                   />
-                </InlineStack>
-                {manualNotifyCustomer && (
-                  <BlockStack gap="300">
-                    <TextField
-                      label="E-posta Konusu"
-                      value={manualEmailSubject}
-                      onChange={setManualEmailSubject}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label="E-posta Mesajı"
-                      value={manualEmailBody}
-                      onChange={setManualEmailBody}
-                      autoComplete="off"
-                      multiline={6}
-                      helpText="Bu mesaj tam olarak yazdığınız şekilde müşteriye gönderilecektir."
-                    />
-                  </BlockStack>
-                )}
+                  <Collapsible open={manualNotifyCustomer} id="manual-notify-fields">
+                    <div style={{ paddingTop: 8 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <TextField
+                          label="E-posta Konusu"
+                          value={manualEmailSubject}
+                          onChange={setManualEmailSubject}
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="E-posta Mesajı"
+                          value={manualEmailBody}
+                          onChange={setManualEmailBody}
+                          autoComplete="off"
+                          multiline={3}
+                        />
+                      </div>
+                    </div>
+                  </Collapsible>
+                </div>
+                {/* Submit */}
+                <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 4 }}>
+                  <Button
+                    variant="primary"
+                    loading={isManualSubmitting}
+                    onClick={() => {
+                      const fd = new FormData();
+                      fd.set("intent", "manual_create");
+                      fd.set("orderId", manualOrderId);
+                      fd.set("orderName", manualOrderName);
+                      fd.set("customerEmail", manualCustomerEmail);
+                      fd.set("adminReason", manualAdminReason);
+                      fd.set("notifyCustomer", String(manualNotifyCustomer));
+                      fd.set("emailSubject", manualEmailSubject);
+                      fd.set("emailBody", manualEmailBody);
+                      fd.set("resolutionType", manualResolutionType);
+                      fd.set("productId", manualProductId);
+                      fd.set("variantId", manualVariantId);
+                      fd.set("itemTitle", manualItemTitle);
+                      fd.set("quantity", manualQuantity);
+                      fd.set("price", manualPrice);
+                      submit(fd, { method: "post" });
+                    }}
+                  >
+                    {t["returns.adminCreate"] || "İade Oluştur"}
+                  </Button>
+                </div>
               </BlockStack>
-            </Card>
-            <InlineStack gap="200" align="start">
-              <Select
-                label={t["returns.resolution"]}
-                options={[
-                  { label: t["resolution.REFUND"], value: "REFUND" },
-                  { label: t["resolution.EXCHANGE"], value: "EXCHANGE" },
-                  { label: t["resolution.EXCHANGE_DIFFERENT_PRODUCT"], value: "EXCHANGE_DIFFERENT_PRODUCT" },
-                  { label: t["resolution.EXCHANGE_WITH_PRICE_DIFF"], value: "EXCHANGE_WITH_PRICE_DIFF" },
-                  { label: t["resolution.STORE_CREDIT"], value: "STORE_CREDIT" },
-                  { label: t["resolution.KEEP_IT"], value: "KEEP_IT" },
-                ]}
-                value={manualResolutionType}
-                onChange={setManualResolutionType}
-              />
-              <TextField label={t["returns.itemTitle"] || "Ürün"} value={manualItemTitle} onChange={setManualItemTitle} autoComplete="off" />
-              <TextField label={t["detail.qty"]} type="number" value={manualQuantity} onChange={setManualQuantity} autoComplete="off" />
-              <TextField label={t["detail.amount"]} type="number" value={manualPrice} onChange={setManualPrice} autoComplete="off" />
-            </InlineStack>
-            <ButtonGroup>
-              <Button
-                variant="primary"
-                loading={isManualSubmitting}
-                onClick={() => {
-                  const fd = new FormData();
-                  fd.set("intent", "manual_create");
-                  fd.set("orderId", manualOrderId);
-                  fd.set("orderName", manualOrderName);
-                  fd.set("customerEmail", manualCustomerEmail);
-                  fd.set("adminReason", manualAdminReason);
-                  fd.set("notifyCustomer", String(manualNotifyCustomer));
-                  fd.set("emailSubject", manualEmailSubject);
-                  fd.set("emailBody", manualEmailBody);
-                  fd.set("resolutionType", manualResolutionType);
-                  fd.set("productId", manualProductId);
-                  fd.set("variantId", manualVariantId);
-                  fd.set("itemTitle", manualItemTitle);
-                  fd.set("quantity", manualQuantity);
-                  fd.set("price", manualPrice);
-                  submit(fd, { method: "post" });
-                }}
-              >
-                {t["returns.adminCreate"] || "Yönetici Tarafından İade Oluştur"}
-              </Button>
-            </ButtonGroup>
-          </BlockStack>
+            </div>
+          </Collapsible>
         </Card>
 
         <Card padding="0">

@@ -18,6 +18,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import type { Locale } from "../services/i18n-admin";
+import { StatCard } from "../components/StatCard";
 import { translateReason } from "../services/i18n-admin";
 
 // ─── Loader ──────────────────────────────────────────────────
@@ -297,40 +298,6 @@ function LineChart({ data }: { data: { date: string; total: number }[] }) {
   );
 }
 
-// ─── Stat Card ────────────────────────────────────────────────
-
-function StatCard({
-  label, value, sub, color = "#6366F1", icon,
-}: { label: string; value: string | number; sub?: string; color?: string; icon?: string }) {
-  return (
-    <div style={{
-      background: "#fff",
-      borderRadius: 12,
-      padding: "20px 24px",
-      boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-      borderLeft: `4px solid ${color}`,
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 4 }}>{label}</div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: "#111827", lineHeight: 1.2 }}>{value}</div>
-          {sub && <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 4 }}>{sub}</div>}
-        </div>
-        {icon && (
-          <div style={{
-            width: 40, height: 40, borderRadius: 10,
-            background: `${color}18`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 18,
-          }}>
-            {icon}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Progress Bar ─────────────────────────────────────────────
 
 function ProgressRow({ label, count, percent, color }: { label: string; count: number; percent: number; color: string }) {
@@ -424,20 +391,21 @@ export default function Analytics() {
           <StatCard
             label={t["analytics.totalReturns"]}
             value={data.totalReturns}
-            sub={trendChange !== null ? `${trendUp ? "▲" : "▼"} ${Math.abs(parseFloat(trendChange))}% vs previous period` : undefined}
+            trend={trendChange !== null ? { value: Math.abs(parseFloat(trendChange)), direction: trendUp ? "up" : "down" } : undefined}
+            subtitle={trendChange !== null ? "vs previous period" : undefined}
             color="#6366F1"
             icon="📦"
           />
           <StatCard
             label={t["analytics.savedRevenue"]}
-            value={data.savedRevenue}
-            sub={`Exchange ${exchangeRate}% · Credit ${storeCreditRate}%`}
+            value={`$${data.savedRevenue}`}
+            subtitle={`Exchange ${exchangeRate}% · Credit ${storeCreditRate}%`}
             color="#10B981"
             icon="💰"
           />
           <StatCard
             label={t["analytics.totalRefund"]}
-            value={data.totalRefundAmount}
+            value={`$${data.totalRefundAmount}`}
             color="#EF4444"
             icon="↩️"
           />
