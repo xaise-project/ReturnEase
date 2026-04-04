@@ -35,6 +35,8 @@ export default function App() {
         </Link>
         <Link to="/app/returns">{t["nav.returns"]}</Link>
         <Link to="/app/analytics">{t["nav.analytics"]}</Link>
+        <Link to="/app/policy">{t["nav.policy"]}</Link>
+        <Link to="/app/abuse-prevention">{t["nav.abusePrevention"]}</Link>
         <Link to="/app/billing">{t["nav.billing"]}</Link>
         <Link to="/app/settings">{t["nav.settings"]}</Link>
       </NavMenu>

@@ -1,4 +1,5 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
 import { useLoaderData, useNavigate, useOutletContext } from "@remix-run/react";
 import {
   Page,
@@ -17,9 +18,19 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import type { Locale } from "../services/i18n-admin";
 import { StatCard } from "../components/StatCard";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+
+  // Onboarding check
+  const storeSettings = await prisma.storeSettings.findUnique({
+    where: { shop: session.shop },
+    select: { onboardingCompleted: true },
+  });
+  if (!storeSettings || !storeSettings.onboardingCompleted) {
+    return redirect("/app/onboarding");
+  }
 
   const [totalReturns, pendingReturns, approvedReturns, completedReturns, recentReturns] = await Promise.all([
     prisma.returnRequest.count({ where: { shop: session.shop } }),
@@ -76,14 +87,19 @@ export default function Index() {
                 icon="📦"
                 color="#6366F1"
               />
-              <StatCard
-                label={t["dashboard.pending"]}
-                value={pendingReturns}
-                icon="⏳"
-                color="#F59E0B"
-                onClick={() => navigate("/app/returns?status=REQUESTED")}
-                badge={pendingReturns > 0 ? <Badge tone="attention">{t["dashboard.new"]}</Badge> : undefined}
-              />
+              <div style={{ position: "relative" }}>
+                <StatCard
+                  label={t["dashboard.pending"]}
+                  value={pendingReturns}
+                  icon="⏳"
+                  color="#F59E0B"
+                  onClick={() => navigate("/app/returns?status=REQUESTED")}
+                  badge={pendingReturns > 0 ? <Badge tone="attention">{t["dashboard.new"]}</Badge> : undefined}
+                />
+                <div style={{ position: "absolute", top: 12, right: 12 }}>
+                  <InfoTooltip content={t["tooltip.pending"] || "Returns awaiting your review. Click to see details and take action."} />
+                </div>
+              </div>
               <StatCard
                 label={t["dashboard.approved"]}
                 value={approvedReturns}

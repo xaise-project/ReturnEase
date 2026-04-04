@@ -2,12 +2,11 @@
 
 client_id = "38aac24535462f94450179b4b08f52f9"
 name = "returnease"
-application_url = "https://example.com"
+application_url = "https://smith-clothing-devices-cornwall.trycloudflare.com"
 embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
-include_config_on_deploy = true
 
 [webhooks]
 api_version = "2026-01"
@@ -24,14 +23,13 @@ api_version = "2026-01"
   topics = [ "returns/update" ]
   uri = "/webhooks/returns/update"
 
-
 [access_scopes]
 scopes = "read_orders,write_returns,write_store_credit_account_transactions,read_products,write_draft_orders,read_customers,write_gift_cards,write_discounts"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://smith-clothing-devices-cornwall.trycloudflare.com/api/auth" ]
 
 [app_proxy]
-url = "https://example.com/portal"
+url = "https://smith-clothing-devices-cornwall.trycloudflare.com/portal"
 subpath = "returns"
 prefix = "apps"

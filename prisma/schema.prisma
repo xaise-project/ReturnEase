@@ -95,6 +95,8 @@ model StoreSettings {
   wardrobingMaxReturns Int @default(3)
   ipRepeatWindowHours Int @default(24)
   ipRepeatMaxReturns Int @default(2)
+  // Onboarding
+  onboardingCompleted Boolean @default(false)
   // Billing
   plan             String   @default("FREE")
   shopifySubscriptionId String?

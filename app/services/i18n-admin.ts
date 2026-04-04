@@ -4,8 +4,13 @@ const translations: Record<string, Record<string, string>> = {
     "nav.home": "Home",
     "nav.returns": "Returns",
     "nav.analytics": "Analytics",
+    "nav.policy": "Return Policy",
+    "nav.abusePrevention": "Abuse Prevention",
     "nav.billing": "Plan",
     "nav.settings": "Settings",
+
+    // Abuse Prevention
+    "abusePrevention.title": "Abuse Prevention",
 
     // Dashboard
     "dashboard.welcome": "Welcome",
@@ -340,14 +345,27 @@ const translations: Record<string, Record<string, string>> = {
     "settings.windowDaysShort": "Days",
     "settings.nonReturnables": "Non-returnable Products & Collections",
     "settings.nonReturnablesHelp": "Select the products and collections that should be excluded from returns.",
+
+    // Tooltips
+    "tooltip.returnWindow": "30 days is standard, 14 days is strict, 60 days is customer-friendly. Most Shopify stores use 30 days.",
+    "tooltip.autoApprove": "Speeds up low-value returns but increases fraud risk. Recommended with an amount threshold.",
+    "tooltip.wardrobing": "Customer uses the item and returns it. E.g. buying a dress for an event then sending it back. Detects frequent returners.",
+    "tooltip.ipDetection": "May trigger false positives for customers using offices or VPNs. We recommend starting with low sensitivity.",
+    "tooltip.savedRevenue": "Exchange + store credit = revenue saved vs full refund. Higher is better for your bottom line.",
+    "tooltip.pending": "Returns awaiting your review. Click to see details and take action.",
   },
   tr: {
     // Nav
     "nav.home": "Ana Sayfa",
     "nav.returns": "İadeler",
     "nav.analytics": "Analitik",
+    "nav.policy": "İade Politikası",
+    "nav.abusePrevention": "Kötüye Kullanım Önleme",
     "nav.billing": "Plan",
     "nav.settings": "Ayarlar",
+
+    // Abuse Prevention
+    "abusePrevention.title": "Kötüye Kullanım Önleme",
 
     // Dashboard
     "dashboard.welcome": "Hoş geldiniz",
@@ -682,6 +700,14 @@ const translations: Record<string, Record<string, string>> = {
     "settings.windowDaysShort": "Gün",
     "settings.nonReturnables": "İade Dışı Ürün ve Kategoriler",
     "settings.nonReturnablesHelp": "İadeye kapatmak istediğiniz ürün ve kategorileri seçin.",
+
+    // Tooltips
+    "tooltip.returnWindow": "30 gün standart, 14 gün sıkı, 60 gün müşteri odaklı. Shopify mağazalarının çoğu 30 gün kullanır.",
+    "tooltip.autoApprove": "Düşük tutarlı iadeleri hızlandırır ama fraud riski artırır. Tutar limiti ile kullanmanızı öneririz.",
+    "tooltip.wardrobing": "Müşteri ürünü kullanıp iade ediyor. Örn: bir etkinlik için elbise alıp geri göndermek. Sık iade yapan müşterileri tespit eder.",
+    "tooltip.ipDetection": "Ofis veya VPN kullanan müşterilerde yanlış pozitif tetiklenebilir. Düşük hassasiyet ile başlamanızı öneririz.",
+    "tooltip.savedRevenue": "Exchange + mağaza kredisi = tam iadeden kurtarılan gelir. Yüksek olması karlılığınız için iyidir.",
+    "tooltip.pending": "İnceleme bekleyen iadeler. Detayları görmek ve işlem yapmak için tıklayın.",
   },
 };
 

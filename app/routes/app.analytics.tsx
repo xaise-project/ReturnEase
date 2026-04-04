@@ -18,6 +18,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import type { Locale } from "../services/i18n-admin";
+import { InfoTooltip } from "../components/InfoTooltip";
 import { StatCard } from "../components/StatCard";
 import { translateReason } from "../services/i18n-admin";
 
@@ -396,13 +397,18 @@ export default function Analytics() {
             color="#6366F1"
             icon="📦"
           />
-          <StatCard
-            label={t["analytics.savedRevenue"]}
-            value={`$${data.savedRevenue}`}
-            subtitle={`Exchange ${exchangeRate}% · Credit ${storeCreditRate}%`}
-            color="#10B981"
-            icon="💰"
-          />
+          <div style={{ position: "relative" }}>
+            <StatCard
+              label={t["analytics.savedRevenue"]}
+              value={`$${data.savedRevenue}`}
+              subtitle={`Exchange ${exchangeRate}% · Credit ${storeCreditRate}%`}
+              color="#10B981"
+              icon="💰"
+            />
+            <div style={{ position: "absolute", top: 12, right: 12 }}>
+              <InfoTooltip content={t["tooltip.savedRevenue"] || "Exchange + store credit = revenue saved vs full refund. Higher is better for your bottom line."} />
+            </div>
+          </div>
           <StatCard
             label={t["analytics.totalRefund"]}
             value={`$${data.totalRefundAmount}`}
